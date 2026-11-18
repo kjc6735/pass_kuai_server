@@ -1,0 +1,96 @@
+# 실험 환경: 서버 + 가짜 Claude + Prometheus + Grafana (+ k6)
+#   켜기:   npm run lab:up
+#   끄기:   npm run lab:down
+#   Grafana: http://localhost:3001  (로그인 없이 열린다)
+name: pass-kuai-lab
+
+services:
+  server:
+    build:
+      context: ../..
+    environment:
+      PORT: 3000
+      ANTHROPIC_API_KEY: mock-key
+      ANTHROPIC_BASE_URL: http://mock-llm:8080
+      ANTHROPIC_MAX_RETRIES: ${ANTHROPIC_MAX_RETRIES:-0}
+      ANTHROPIC_TIMEOUT_MS: ${ANTHROPIC_TIMEOUT_MS:-60000}
+      OPENAI_API_KEY: mock-key
+      OPENAI_BASE_URL: http://mock-llm:8080/v1
+      JWT_SECRET: lab-only-secret
+      # 실험에서는 한도를 기본으로 끈다(0). 한도 자체를 실험할 때만 켠다.
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-0}
+      AUTH_RATE_LIMIT_PER_MINUTE: ${AUTH_RATE_LIMIT_PER_MINUTE:-0}
+      DAILY_REQUEST_LIMIT: ${DAILY_REQUEST_LIMIT:-0}
+      DAILY_AUDIO_SECONDS_LIMIT: ${DAILY_AUDIO_SECONDS_LIMIT:-0}
+      DAILY_BUDGET_USD: ${DAILY_BUDGET_USD:-0}
+      NODE_OPTIONS: ${SERVER_NODE_OPTIONS:-}
+    ports:
+      - "3000:3000"
+    # 실험마다 조건이 같도록 자원을 고정한다.
+    cpus: 1
+    mem_limit: 512m
+    depends_on:
+      - mock-llm
+    restart: unless-stopped
+
+  mock-llm:
+    build:
+      context: ../mock-llm
+    environment:
+      LATENCY_MS: ${MOCK_LATENCY_MS:-1500}
+      JITTER_MS: ${MOCK_JITTER_MS:-300}
+      TAIL_RATE: ${MOCK_TAIL_RATE:-0.01}
+      TAIL_MS: ${MOCK_TAIL_MS:-6000}
+      ERROR_RATE: ${MOCK_ERROR_RATE:-0}
+      ERROR_STATUS: ${MOCK_ERROR_STATUS:-529}
+      RPM_LIMIT: ${MOCK_RPM_LIMIT:-0}
+      DROP_RATE: ${MOCK_DROP_RATE:-0}
+      STT_LATENCY_MS: ${MOCK_STT_LATENCY_MS:-800}
+    ports:
+      - "8080:8080"
+
+  prometheus:
+    image: prom/prometheus:v3.13.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      # k6 결과를 받기 위해 필요하다.
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pass-kuai-server.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
+  # 부하 도구. 평소에는 켜지지 않고 npm run load:* 로 실행한다.
+  k6:
+    image: grafana/k6:1.7.1
+    profiles: ["load"]
+    environment:
+      BASE_URL: http://server:3000
+      K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
+      K6_PROMETHEUS_RW_TREND_STATS: p(50),p(95),p(99),max
+    volumes:
+      - ../load:/scripts:ro
+    depends_on:
+      - server
+
+volumes:
+  prometheus-data:
+  grafana-data:

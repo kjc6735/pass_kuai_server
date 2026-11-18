@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic from '@anthropic-ai/sdk';
 
 export const LOOKUP_SYSTEM_PROMPT = `당신은 중국어-한국어 사전입니다.
 - 단어의 주요 뜻을 최대 3개까지 쉼표로 구분해 제시하세요 (가장 일반적인 뜻이 맨 앞)
@@ -9,7 +9,10 @@ export const LOOKUP_SYSTEM_PROMPT = `당신은 중국어-한국어 사전입니�
 export const LOOKUP_EXAMPLES: Anthropic.MessageParam[] = [
   { role: 'user', content: '다음 단어의 한국어 뜻을 알려줘: "打"' },
   { role: 'assistant', content: '치다, (전화를) 걸다, 만들다' },
-  { role: 'user', content: '다음 문장에서 "打"의 한국어 뜻을 알려줘: "我给他打电话。"' },
+  {
+    role: 'user',
+    content: '다음 문장에서 "打"의 한국어 뜻을 알려줘: "我给他打电话。"',
+  },
   { role: 'assistant', content: '(전화를) 걸다' },
   { role: 'user', content: '다음 단어의 한국어 뜻을 알려줘: "马马虎虎"' },
   { role: 'assistant', content: '그저 그렇다, 대충대충 하다' },
@@ -110,4 +113,3 @@ export const ANALYZE_TOOL: Anthropic.Tool = {
     required: ['sentences'],
   },
 };
-
