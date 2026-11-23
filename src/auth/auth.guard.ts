@@ -1,15 +1,11 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { IS_PUBLIC_KEY } from '../common/public.decorator';
-import type { RequestWithDevice } from '../common/request-with-device';
+import { AppException } from '../common/errors/app.exception';
+import { IS_PUBLIC_KEY } from '../constants/auth';
+import type { RequestWithUser } from '../common/request-with-user';
 import { AuthService } from './auth.service';
+import { ErrorCode } from '../constants/error-code';
 
-/** 모든 주소에 적용되는 인증 가드. @Public()이 붙은 곳만 통과시킨다. */
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
@@ -25,15 +21,15 @@ export class AuthGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    const req = context.switchToHttp().getRequest<RequestWithDevice>();
+    const req = context.switchToHttp().getRequest<RequestWithUser>();
     const header = req.headers.authorization ?? '';
     const [scheme, token] = header.split(' ');
     if (scheme !== 'Bearer' || !token)
-      throw new UnauthorizedException('토큰이 없어요.');
+      throw new AppException(ErrorCode.UNAUTHORIZED);
 
-    const deviceId = await this.auth.verify(token);
-    if (!deviceId) throw new UnauthorizedException('토큰이 유효하지 않아요.');
-    req.deviceId = deviceId;
+    const userId = await this.auth.verifyAccessToken(token);
+    if (!userId) throw new AppException(ErrorCode.UNAUTHORIZED);
+    req.userId = userId;
     return true;
   }
 }

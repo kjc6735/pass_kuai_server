@@ -1,9 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { Injectable, Logger } from '@nestjs/common';
+import { AppException } from '../common/errors/app.exception';
+import { MAX_ANALYZE_ATTEMPTS, MAX_LOGGED_ISSUES } from '../constants/analyze';
+import { ErrorCode } from '../constants/error-code';
 import {
-  Injectable,
-  InternalServerErrorException,
-  UnprocessableEntityException,
-} from '@nestjs/common';
+  ANALYZE_MAX_TOKENS,
+  ANALYZE_MODEL,
+  LOOKUP_MAX_TOKENS,
+  LOOKUP_MODEL,
+} from '../constants/llm';
 import { LlmService } from '../llm/llm.service';
 import { MetricsService } from '../metrics/metrics.service';
 import {
@@ -12,9 +17,18 @@ import {
   LOOKUP_EXAMPLES,
   LOOKUP_SYSTEM_PROMPT,
 } from '../prompts/analyze.prompt';
-import { AnalyzeResult } from './types/analyze.result';
+import { AnalysisResultService } from './analysis-result.service';
+import {
+  AnalyzeResultIssueKind,
+  validateAnalyzeResult,
+} from './analyze-result.validator';
+import { AnalyzeResult, AnalyzeSentenceResponse } from './types/analyze.result';
 
-const MAX_ANALYZE_ATTEMPTS = 3;
+export const INVALID_RESULT_MESSAGES: Record<AnalyzeResultIssueKind, string> = {
+  tooLong:
+    '분석 결과가 너무 길어 처리하지 못했어요. 문장을 나눠서 다시 시도해 주세요.',
+  malformed: '분석 결과를 제대로 만들지 못했어요. 잠시 후 다시 시도해 주세요.',
+};
 
 function cachedSystem(text: string): Anthropic.TextBlockParam[] {
   return [{ type: 'text', text, cache_control: { type: 'ephemeral' } }];
@@ -22,18 +36,30 @@ function cachedSystem(text: string): Anthropic.TextBlockParam[] {
 
 @Injectable()
 export class AnalyzeService {
+  private readonly logger = new Logger(AnalyzeService.name);
+
   constructor(
     private readonly llm: LlmService,
     private readonly metrics: MetricsService,
+    private readonly results: AnalysisResultService,
   ) {}
 
   async analyzeSentence({
     sentence,
-    deviceId,
+    userId,
   }: {
     sentence: string;
-    deviceId?: string;
-  }): Promise<AnalyzeResult> {
+    userId: string;
+  }): Promise<AnalyzeSentenceResponse> {
+    const result = await this.analyze(sentence, userId);
+    const analysisId = await this.results.save(userId, sentence, result);
+    return { analysisId, ...result };
+  }
+
+  private async analyze(
+    sentence: string,
+    userId: string,
+  ): Promise<AnalyzeResult> {
     let feedback = '';
     let lastResult: AnalyzeResult | null = null;
 
@@ -42,7 +68,7 @@ export class AnalyzeService {
         sentence,
         feedback,
         attempt,
-        deviceId,
+        userId,
       );
       lastResult = result;
 
@@ -59,8 +85,9 @@ export class AnalyzeService {
     }
 
     if (!lastResult) {
-      throw new InternalServerErrorException(
-        '분석 결과를 생성하지 못했습니다.',
+      throw new AppException(
+        ErrorCode.INTERNAL,
+        '분석 결과를 만들지 못했어요. 잠시 후 다시 시도해 주세요.',
       );
     }
     return lastResult;
@@ -70,13 +97,13 @@ export class AnalyzeService {
     sentence: string,
     feedback: string,
     attempt: number,
-    deviceId?: string,
+    userId: string,
   ): Promise<AnalyzeResult> {
     const message = await this.llm.createMessage(
       'analyze',
       {
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 4096,
+        model: ANALYZE_MODEL,
+        max_tokens: ANALYZE_MAX_TOKENS,
         system: cachedSystem(ANALYZE_SYSTEM_PROMPT),
         tools: [ANALYZE_TOOL],
         tool_choice: { type: 'tool', name: ANALYZE_TOOL.name },
@@ -87,15 +114,11 @@ export class AnalyzeService {
           },
         ],
       },
-      { attempt, deviceId },
+      { attempt, userId },
     );
 
-    // 출력 한도에서 끊긴 결과는 JSON이 깨져 있거나 뒤쪽 단어가 빠져 있다.
-    // 재시도해도 같은 길이에서 또 끊기므로, 돈을 더 쓰지 않고 바로 알린다.
     if (message.stop_reason === 'max_tokens') {
-      throw new UnprocessableEntityException(
-        '문장이 너무 길어서 한 번에 분석하지 못했어요. 조금 나눠서 넣어 주세요.',
-      );
+      throw new AppException(ErrorCode.TEXT_TOO_LONG);
     }
 
     const toolUse = message.content.find(
@@ -103,12 +126,32 @@ export class AnalyzeService {
     );
 
     if (!toolUse) {
-      throw new InternalServerErrorException(
-        '분석 결과를 생성하지 못했습니다.',
+      throw new AppException(
+        ErrorCode.INTERNAL,
+        '분석 결과를 만들지 못했어요. 잠시 후 다시 시도해 주세요.',
       );
     }
 
-    return toolUse.input as AnalyzeResult;
+    const validation = validateAnalyzeResult(toolUse.input);
+    if (!validation.ok) {
+      const shown = validation.issues
+        .slice(0, MAX_LOGGED_ISSUES)
+        .map((i) => `${i.path}:${i.constraint}`)
+        .join(', ');
+      const more = validation.issues.length - MAX_LOGGED_ISSUES;
+      this.logger.warn(
+        `invalid analyze result kind=${validation.kind} message=${message.id} ` +
+          `attempt=${attempt} user=${userId} ` +
+          `issues=${validation.issues.length} [${shown}${more > 0 ? `, +${more}` : ''}]`,
+      );
+      throw new AppException(
+        validation.kind === 'tooLong'
+          ? ErrorCode.TEXT_TOO_LONG
+          : ErrorCode.ANALYZE_FAILED,
+        INVALID_RESULT_MESSAGES[validation.kind],
+      );
+    }
+    return validation.value;
   }
 
   private normalize(text: string): string {
@@ -118,11 +161,9 @@ export class AnalyzeService {
   private findCoverageIssues(result: AnalyzeResult): string[] {
     const issues: string[] = [];
 
-    for (const s of result?.sentences ?? []) {
+    for (const s of result.sentences) {
       const expected = this.normalize(s.sentence);
-      const actual = this.normalize(
-        (s.words ?? []).map((w) => w.text).join(''),
-      );
+      const actual = this.normalize(s.words.map((w) => w.text).join(''));
 
       if (expected === actual) continue;
 
@@ -158,11 +199,11 @@ export class AnalyzeService {
   async lookupWord({
     word,
     context,
-    deviceId,
+    userId,
   }: {
     word: string;
     context?: string;
-    deviceId?: string;
+    userId?: string;
   }) {
     const userContent = context
       ? `다음 문장에서 "${word}"의 한국어 뜻을 알려줘: "${context}"`
@@ -171,20 +212,16 @@ export class AnalyzeService {
     const message = await this.llm.createMessage(
       'lookup',
       {
-        model: 'claude-sonnet-4-6',
-        max_tokens: 512,
+        model: LOOKUP_MODEL,
+        max_tokens: LOOKUP_MAX_TOKENS,
         system: cachedSystem(LOOKUP_SYSTEM_PROMPT),
         messages: [...LOOKUP_EXAMPLES, { role: 'user', content: userContent }],
       },
-      { deviceId },
+      { userId },
     );
     return this.extractText(message);
   }
 
-  /**
-   * 글자 블록을 찾아 읽는다. 첫 블록만 보면 안 된다:
-   * 최신 모델은 응답이 생각(thinking) 블록으로 시작할 수 있다.
-   */
   private extractText(message: Anthropic.Message): string {
     const block = message.content.find(
       (b): b is Anthropic.TextBlock => b.type === 'text',

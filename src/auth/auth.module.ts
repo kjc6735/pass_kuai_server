@@ -1,35 +1,41 @@
-import { Logger, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
 import { AuthGuard } from './auth.guard';
+import { AccountService } from './account.service';
 import { AuthService } from './auth.service';
-
-const DEV_SECRET = 'dev-only-secret-change-me';
+import { AppleVerifier } from './social/apple.verifier';
+import { GoogleVerifier } from './social/google.verifier';
+import { KakaoVerifier } from './social/kakao.verifier';
+import type { SocialVerifier } from './social/social-verifier';
+import { SOCIAL_VERIFIERS } from '../constants/auth';
+import { Env } from '../constants/env';
+import type { EnvConfig } from '../config/env.schema';
 
 @Module({
   imports: [
     JwtModule.registerAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const secret = config.get<string>('JWT_SECRET');
-        if (!secret) {
-          if (config.get<string>('NODE_ENV') === 'production') {
-            throw new Error('JWT_SECRET이 설정되지 않았습니다.');
-          }
-          new Logger('AuthModule').warn(
-            'JWT_SECRET이 없어 개발용 값을 씁니다. 배포 환경에서는 반드시 설정하세요.',
-          );
-        }
-        return {
-          secret: secret || DEV_SECRET,
-          signOptions: { expiresIn: '365d' },
-        };
-      },
+      useFactory: (config: ConfigService<EnvConfig, true>) => ({
+        secret: config.get(Env.JWT_SECRET, { infer: true }),
+      }),
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, AuthGuard],
+  providers: [
+    AuthService,
+    AccountService,
+    AuthGuard,
+    KakaoVerifier,
+    AppleVerifier,
+    GoogleVerifier,
+    {
+      provide: SOCIAL_VERIFIERS,
+      inject: [KakaoVerifier, AppleVerifier, GoogleVerifier],
+      useFactory: (...verifiers: SocialVerifier[]) => verifiers,
+    },
+  ],
   exports: [AuthService, AuthGuard],
 })
 export class AuthModule {}

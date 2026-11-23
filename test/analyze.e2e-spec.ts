@@ -22,6 +22,7 @@ describe('POST /analyze (e2e)', () => {
       .expect(200);
 
     expect(res.body.sentences[0].words).toHaveLength(2);
+    expect(res.body.analysisId).toEqual(expect.any(String));
   });
 
   it('빈 문장은 400이고 AI를 부르지 않는다', async () => {
@@ -39,6 +40,22 @@ describe('POST /analyze (e2e)', () => {
       .set('Authorization', auth)
       .send({ sentence: '好'.repeat(1001) })
       .expect(400);
+  });
+
+  it('AI 결과가 상한을 넘으면 422와 한국어 message를 준다 (앱이 그대로 보여 준다)', async () => {
+    const reply = analysisReply('你好', ['你', '好']);
+    reply.content[0].input.sentences[0].translation = '가'.repeat(4001);
+    t.create.mockResolvedValueOnce(reply);
+
+    const res = await request(t.app.getHttpServer())
+      .post('/analyze/sentence')
+      .set('Authorization', auth)
+      .send({ sentence: '你好' })
+      .expect(422);
+
+    expect(typeof res.body.message).toBe('string');
+    expect(res.body.message).toMatch(/[가-힣]/);
+    expect(res.body.message).toContain('나눠서');
   });
 
   it('AI가 실패하면 500이다', async () => {

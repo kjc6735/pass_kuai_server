@@ -3,27 +3,20 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { MetricsService } from '../metrics/metrics.service';
 import { UsageService } from '../usage/usage.service';
 import { hasKnownPrice, LlmTokenUsage, llmCostUsd } from './pricing';
+import { ANTHROPIC_CLIENT } from '../constants/llm';
 
-export const ANTHROPIC_CLIENT = 'ANTHROPIC_CLIENT';
 export type LlmOperation = 'analyze' | 'lookup';
 
-/**
- * ok: 정상 · truncated: 출력 한도(max_tokens)에서 끊김 · refusal: 모델이 답을 거절
- * error: 호출 실패 (네트워크, 과부하, 시간 초과 등)
- */
 export type LlmOutcome = 'ok' | 'truncated' | 'refusal' | 'error';
 
 export interface LlmCallMeta {
-  /** 같은 사용자 요청 안에서 몇 번째 호출인지 (빠진 글자 재요청) */
   attempt?: number;
-  /** 누가 비용을 쓰는지 보려고 로그에 남긴다 */
-  deviceId?: string;
+  userId?: string;
 }
 
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger('LLM');
-  /** 가격표에 없는 모델 경고는 모델마다 한 번만 */
   private readonly warnedModels = new Set<string>();
 
   constructor(
@@ -32,11 +25,6 @@ export class LlmService {
     private readonly usage: UsageService,
   ) {}
 
-  /**
-   * AI를 한 번 부르고, 시간·토큰·비용을 기록한다.
-   * 응답이 잘렸는지(truncated) 판단해 기록만 하고 돌려준다.
-   * 잘린 응답을 쓸지 말지는 부른 쪽이 정한다 (분석은 못 쓰고, 짧은 뜻 조회는 쓸 수 있다).
-   */
   async createMessage(
     operation: LlmOperation,
     params: Anthropic.MessageCreateParamsNonStreaming,
@@ -48,7 +36,6 @@ export class LlmService {
     try {
       this.usage.assertWithinBudget();
     } catch (err) {
-      // 막힌 호출도 세어야 상한을 얼마로 둘지 판단할 수 있다
       this.metrics.llmBudgetBlocked.inc({ operation });
       throw err;
     }
@@ -105,8 +92,8 @@ export class LlmService {
         stopReason,
         errorType,
         attempt: meta.attempt ?? 1,
-        deviceId: meta.deviceId,
-        messageId, // Anthropic 콘솔의 기록과 맞춰 볼 때 쓴다
+        userId: meta.userId,
+        messageId,
         ms: Math.round(ms),
         ...tokens,
         costUsd: Number(costUsd.toFixed(6)),
@@ -125,7 +112,6 @@ export class LlmService {
   }
 }
 
-/** 실패 원인을 짧게: HTTP 상태(429 요청 초과, 529 과부하 등) 또는 에러 이름(시간 초과 등) */
 function describeError(err: unknown): string {
   if (err instanceof Anthropic.APIError && err.status) {
     return `http_${err.status}`;

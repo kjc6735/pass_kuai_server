@@ -1,17 +1,65 @@
-import { Controller, HttpCode, Post } from '@nestjs/common';
-import { AuthRateLimit, Public } from '../common/public.decorator';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Post,
+  Req,
+} from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
+import { Public } from '../common/public.decorator';
+import type { RequestWithUser } from '../common/request-with-user';
+import { AccountService } from './account.service';
 import { AuthService } from './auth.service';
+import { DeleteAccountRequestDto } from './dtos/delete-account.request.dto';
+import { RefreshTokenRequestDto } from './dtos/refresh-token.request.dto';
+import { SocialLoginRequestDto } from './dtos/social-login.request.dto';
 
-@Controller('auth')
+@Controller()
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly account: AccountService,
+  ) {}
 
-  /** 기기 토큰 발급. 누구나 부를 수 있어서 IP당 분당 횟수를 따로 제한한다. */
   @Public()
-  @AuthRateLimit()
-  @Post('device')
+  @SkipThrottle()
+  @Post('auth/social/:provider')
   @HttpCode(200)
-  issueDevice() {
-    return this.auth.issueDeviceToken();
+  socialLogin(
+    @Param('provider') provider: string,
+    @Body() dto: SocialLoginRequestDto,
+  ) {
+    return this.auth.socialLogin(provider, dto);
+  }
+
+  @Public()
+  @SkipThrottle()
+  @Post('auth/refresh')
+  @HttpCode(200)
+  refresh(@Body() dto: RefreshTokenRequestDto) {
+    return this.auth.refresh(dto.refreshToken);
+  }
+
+  @Post('auth/logout')
+  @HttpCode(204)
+  async logout(
+    @Req() req: RequestWithUser,
+    @Body() dto: RefreshTokenRequestDto,
+  ) {
+    await this.auth.logout(req.userId!, dto.refreshToken);
+  }
+
+  @Get('me')
+  me(@Req() req: RequestWithUser) {
+    return this.auth.me(req.userId!);
+  }
+
+  @Delete('me')
+  @HttpCode(202)
+  deleteMe(@Req() req: RequestWithUser, @Body() dto: DeleteAccountRequestDto) {
+    return this.account.requestDeletion(req.userId!, dto);
   }
 }

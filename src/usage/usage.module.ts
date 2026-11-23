@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DailyLimitGuard } from './daily-limit.guard';
+import type { EnvConfig } from '../config/env.schema';
+import { DailyLimitInterceptor } from './daily-limit.interceptor';
 import { UsageService } from './usage.service';
 
 @Global()
@@ -9,10 +10,10 @@ import { UsageService } from './usage.service';
     {
       provide: UsageService,
       inject: [ConfigService],
-      useFactory: (c: ConfigService) => new UsageService(c),
+      useFactory: (c: ConfigService<EnvConfig, true>) => new UsageService(c),
     },
-    DailyLimitGuard,
+    DailyLimitInterceptor,
   ],
-  exports: [UsageService, DailyLimitGuard],
+  exports: [UsageService, DailyLimitInterceptor],
 })
 export class UsageModule {}
