@@ -1,8 +1,14 @@
-// 단어 뜻 조회 API에 계단식 부하를 건다. 같은 단어가 많이 반복되므로 캐시 실험의 기준점이 된다.
-//   RATES=5,10,20,50 STEP=2m DIST=skewed (기본값)
 import http from 'k6/http';
 import { check } from 'k6';
-import { BASE_URL, words, sentences, pick, stairs, jsonHeaders, issueToken } from './lib/common.js';
+import {
+  BASE_URL,
+  words,
+  sentences,
+  pick,
+  stairs,
+  jsonHeaders,
+  issueToken,
+} from './lib/common.js';
 
 export const options = {
   scenarios: {
@@ -27,8 +33,14 @@ export function setup() {
 }
 
 export default function ({ token }) {
-  // 30%는 문장과 함께 조회한다 (문맥이 있는 조회).
-  const body = Math.random() < 0.3 ? { word: pick(words), context: pick(sentences) } : { word: pick(words) };
-  const res = http.post(`${BASE_URL}/analyze/word`, JSON.stringify(body), { ...jsonHeaders(token), tags: { name: 'analyze_word' }, timeout: __ENV.TIMEOUT || '60s' });
+  const body =
+    Math.random() < 0.3
+      ? { word: pick(words), context: pick(sentences) }
+      : { word: pick(words) };
+  const res = http.post(`${BASE_URL}/analyze/word`, JSON.stringify(body), {
+    ...jsonHeaders(token),
+    tags: { name: 'analyze_word' },
+    timeout: __ENV.TIMEOUT || '60s',
+  });
   check(res, { '2xx': (r) => r.status >= 200 && r.status < 300 });
 }
