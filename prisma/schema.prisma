@@ -1,0 +1,187 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                  String    @id @default(uuid()) @db.Uuid
+  deletionScheduledAt DateTime? @map("deletion_scheduled_at") @db.Timestamptz(3)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  socialAccounts  SocialAccount[]
+  refreshTokens   RefreshToken[]
+  analysisResults AnalysisResult[]
+  vocabWords      VocabWord[]
+  vocabSentences  VocabSentence[]
+  dailyUsage      DailyUsage[]
+
+  @@index([deletionScheduledAt])
+  @@map("users")
+}
+
+enum SocialProvider {
+  kakao
+  apple
+  google
+
+  @@map("social_provider")
+}
+
+model SocialAccount {
+  id                String         @id @default(uuid()) @db.Uuid
+  userId            String         @map("user_id") @db.Uuid
+  provider          SocialProvider
+  providerUserId    String         @map("provider_user_id") @db.VarChar(255)
+  appleRefreshToken String?        @map("apple_refresh_token")
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@unique([userId, provider])
+  @@map("social_accounts")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  familyId  String    @map("family_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+model AnalysisResult {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  input     String   @db.VarChar(1000)
+  result    Json     @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vocabWords     VocabWord[]
+  vocabSentences VocabSentence[]
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("analysis_results")
+}
+
+model VocabWord {
+  id               BigInt    @id @default(autoincrement())
+  userId           String    @map("user_id") @db.Uuid
+  word             String    @db.VarChar(50)
+  pinyin           String    @db.VarChar(200)
+  meaning          String    @db.VarChar(200)
+  pos              String?   @db.VarChar(50)
+  syllables        Json      @default("[]") @db.JsonB
+  sourceAnalysisId String?   @map("source_analysis_id") @db.Uuid
+  sourceSentence   String?   @map("source_sentence") @db.VarChar(1000)
+  srsLevel         Int       @default(0) @map("srs_level") @db.SmallInt
+  nextReviewAt     DateTime? @map("next_review_at") @db.Timestamptz(3)
+  lastReviewedAt   DateTime? @map("last_reviewed_at") @db.Timestamptz(3)
+  savedAt          DateTime  @default(now()) @map("saved_at") @db.Timestamptz(3)
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceAnalysis AnalysisResult? @relation(fields: [sourceAnalysisId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, word, pinyin, meaning])
+  @@index([userId, nextReviewAt])
+  @@index([userId, savedAt])
+  @@index([sourceAnalysisId])
+  @@map("vocab_words")
+}
+
+model VocabSentence {
+  id                 BigInt    @id @default(autoincrement())
+  userId             String    @map("user_id") @db.Uuid
+  sentence           String    @db.VarChar(1000)
+  translation        String    @db.VarChar(4000)
+  pinyin             String    @db.VarChar(8000)
+  sourceAnalysisId   String?   @map("source_analysis_id") @db.Uuid
+  cardSrsLevel       Int       @default(0) @map("card_srs_level") @db.SmallInt
+  cardNextReviewAt   DateTime? @map("card_next_review_at") @db.Timestamptz(3)
+  cardLastReviewedAt DateTime? @map("card_last_reviewed_at") @db.Timestamptz(3)
+  dictationLastAt    DateTime? @map("dictation_last_at") @db.Timestamptz(3)
+  dictationWrongAt   DateTime? @map("dictation_wrong_at") @db.Timestamptz(3)
+  savedAt            DateTime  @default(now()) @map("saved_at") @db.Timestamptz(3)
+
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceAnalysis AnalysisResult?     @relation(fields: [sourceAnalysisId], references: [id], onDelete: SetNull)
+  words          VocabSentenceWord[]
+
+  @@unique([userId, sentence])
+  @@index([userId, cardNextReviewAt])
+  @@index([userId, dictationWrongAt])
+  @@index([userId, savedAt])
+  @@index([sourceAnalysisId])
+  @@map("vocab_sentences")
+}
+
+model VocabSentenceWord {
+  sentenceId BigInt  @map("sentence_id")
+  position   Int     @db.SmallInt
+  word       String  @db.VarChar(50)
+  pinyin     String  @db.VarChar(200)
+  meaning    String  @db.VarChar(200)
+  pos        String? @db.VarChar(50)
+  syllables  Json    @default("[]") @db.JsonB
+
+  sentence VocabSentence @relation(fields: [sentenceId], references: [id], onDelete: Cascade)
+
+  @@id([sentenceId, position])
+  @@map("vocab_sentence_words")
+}
+
+model DailyUsage {
+  userId          String   @map("user_id") @db.Uuid
+  day             DateTime @db.Date
+  analyzeRequests Int      @default(0) @map("analyze_requests")
+  audioSeconds    Int      @default(0) @map("audio_seconds")
+  callSeconds     Int      @default(0) @map("call_seconds")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, day])
+  @@index([day])
+  @@map("daily_usage")
+}
+
+enum DeleteReason {
+  not_using
+  not_enough_call_time
+  missing_feature
+  privacy
+  other
+
+  @@map("delete_reason")
+}
+
+model AccountDeletionReason {
+  id        BigInt       @id @default(autoincrement())
+  reason    DeleteReason
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([createdAt])
+  @@map("account_deletion_reasons")
+}
+
+model DailyCost {
+  day      DateTime @id @db.Date
+  spentUsd Decimal  @default(0) @map("spent_usd") @db.Decimal(10, 4)
+
+  @@map("daily_cost")
+}
