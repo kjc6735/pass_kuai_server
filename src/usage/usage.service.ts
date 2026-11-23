@@ -1,73 +1,82 @@
-import {
-  HttpException,
-  HttpStatus,
-  Injectable,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { kstDay } from '../common/kst-day';
-import { Limits, readLimits } from './limits';
+import { AppException } from '../common/errors/app.exception';
+import { kstDay, nextKstMidnight } from '../utils/kst-day';
+import { ErrorCode } from '../constants/error-code';
+import type { EnvConfig } from '../config/env.schema';
+import { Env } from '../constants/env';
 
-/**
- * 하루 한도와 비용 상한을 센다.
- * 지금은 서버 메모리에 두기 때문에 서버가 재시작하면 초기화되고, 서버가 여러 대면 따로 센다.
- * Redis로 옮기는 일은 실험 계획 주제 2에서 한다.
- */
+export type Refund = () => void;
+
 @Injectable()
 export class UsageService {
-  readonly limits: Limits;
+  private readonly dailyRequests: number;
+  private readonly dailyAudioSeconds: number;
+  private readonly dailyBudgetUsd: number;
   private day = kstDay();
   private requests = new Map<string, number>();
   private audioSeconds = new Map<string, number>();
   private spentUsd = 0;
 
   constructor(
-    config: ConfigService,
+    config: ConfigService<EnvConfig, true>,
     private readonly now: () => Date = () => new Date(),
   ) {
-    this.limits = readLimits(config);
+    this.dailyRequests = config.get(Env.DAILY_REQUEST_LIMIT, { infer: true });
+    this.dailyAudioSeconds = config.get(Env.DAILY_AUDIO_SECONDS_LIMIT, {
+      infer: true,
+    });
+    this.dailyBudgetUsd = config.get(Env.DAILY_BUDGET_USD, { infer: true });
   }
 
-  /** 분석 요청 1건을 쓴다. 하루 한도를 넘으면 429. */
-  consumeRequest(deviceId: string): void {
+  consumeRequest(userId: string): Refund {
     this.rollover();
-    const used = this.requests.get(deviceId) ?? 0;
-    if (this.limits.dailyRequests > 0 && used >= this.limits.dailyRequests) {
-      throw new HttpException(
-        '오늘 사용할 수 있는 분석 횟수를 다 썼어요.',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+    const used = this.requests.get(userId) ?? 0;
+    if (this.dailyRequests > 0 && used >= this.dailyRequests) {
+      throw this.dailyLimit('오늘 사용할 수 있는 분석 횟수를 다 썼어요.');
     }
-    this.requests.set(deviceId, used + 1);
+    this.requests.set(userId, used + 1);
+    return this.refunder(this.requests, userId, 1);
   }
 
-  /** 음성 인식 시간을 쓴다. 하루 한도를 넘으면 429. */
-  consumeAudio(deviceId: string, seconds: number): void {
+  consumeAudio(userId: string, seconds: number): Refund {
     this.rollover();
-    const used = this.audioSeconds.get(deviceId) ?? 0;
-    if (
-      this.limits.dailyAudioSeconds > 0 &&
-      used + seconds > this.limits.dailyAudioSeconds
-    ) {
-      throw new HttpException(
-        '오늘 사용할 수 있는 발음 연습 시간을 다 썼어요.',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+    const used = this.audioSeconds.get(userId) ?? 0;
+    if (this.dailyAudioSeconds > 0 && used + seconds > this.dailyAudioSeconds) {
+      throw this.dailyLimit('오늘 사용할 수 있는 발음 연습 시간을 다 썼어요.');
     }
-    this.audioSeconds.set(deviceId, used + seconds);
+    this.audioSeconds.set(userId, used + seconds);
+    return this.refunder(this.audioSeconds, userId, seconds);
   }
 
-  /** 외부 API를 부르기 전에 확인한다. 오늘 비용 상한을 넘었으면 503. */
+  private refunder(
+    counts: Map<string, number>,
+    userId: string,
+    amount: number,
+  ): Refund {
+    const day = this.day;
+    let done = false;
+    return () => {
+      this.rollover();
+      if (done || day !== this.day) return;
+      done = true;
+      const left = (counts.get(userId) ?? 0) - amount;
+      if (left > 0) counts.set(userId, left);
+      else counts.delete(userId);
+    };
+  }
+
   assertWithinBudget(): void {
     this.rollover();
-    if (
-      this.limits.dailyBudgetUsd > 0 &&
-      this.spentUsd >= this.limits.dailyBudgetUsd
-    ) {
-      throw new ServiceUnavailableException(
-        '오늘은 서비스 사용량이 많아 잠시 쉬어요. 내일 다시 시도해 주세요.',
-      );
+    if (this.dailyBudgetUsd > 0 && this.spentUsd >= this.dailyBudgetUsd) {
+      throw new AppException(ErrorCode.BUDGET_EXCEEDED);
     }
+  }
+
+  private dailyLimit(message: string): AppException {
+    return new AppException(ErrorCode.DAILY_LIMIT, message, {
+      resetsAt: nextKstMidnight(this.now()).toISOString(),
+    });
   }
 
   addCost(usd: number): void {

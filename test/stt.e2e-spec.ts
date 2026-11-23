@@ -78,4 +78,19 @@ describe('POST /stt/transcribe (e2e)', () => {
     await send('8000').expect(200);
     await send('3000').expect(429);
   });
+
+  it('인식에 실패하면 녹음 시간을 빼지 않는다', async () => {
+    const other = `Bearer ${await t.token()}`;
+    const send = () =>
+      request(t.app.getHttpServer())
+        .post('/stt/transcribe')
+        .set('Authorization', other)
+        .field('durationMs', '10000')
+        .attach('file', AUDIO, { filename: 'a.m4a', contentType: 'audio/mp4' });
+
+    t.transcribe.mockRejectedValueOnce(new Error('provider down'));
+    await send().expect(500);
+    t.transcribe.mockResolvedValueOnce('你好');
+    await send().expect(200);
+  });
 });

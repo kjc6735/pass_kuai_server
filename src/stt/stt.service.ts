@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { STT_USD_PER_MINUTE } from '../llm/pricing';
+import { STT_USD_PER_MINUTE } from '../constants/llm';
 import { MetricsService } from '../metrics/metrics.service';
 import { UsageService } from '../usage/usage.service';
 import { comparePronunciation, PronunciationComparison } from './compare';
@@ -21,14 +21,14 @@ export class SttService {
   ) {}
 
   async transcribe(
-    deviceId: string,
+    userId: string,
     audio: AudioFile,
     durationMs: number,
     target?: string,
   ): Promise<TranscribeResult> {
     const seconds = Math.ceil(durationMs / 1000);
-    this.usage.consumeAudio(deviceId, seconds);
     this.usage.assertWithinBudget();
+    const refund = this.usage.consumeAudio(userId, seconds);
 
     const startedAt = performance.now();
     let outcome: 'ok' | 'error' = 'ok';
@@ -39,10 +39,10 @@ export class SttService {
         : { text };
     } catch (err) {
       outcome = 'error';
+      refund();
       throw err;
     } finally {
       const ms = performance.now() - startedAt;
-      // 가격은 분 단위지만 초 단위로 나눠 쌓는다. 실패해도 요금이 나갈 수 있어 함께 센다.
       const costUsd = (seconds / 60) * STT_USD_PER_MINUTE;
       this.usage.addCost(costUsd);
       this.metrics.sttDuration.observe(

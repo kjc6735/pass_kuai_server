@@ -21,3 +21,7 @@ export interface SentenceAnalysis {
 export interface AnalyzeResult {
   sentences: SentenceAnalysis[];
 }
+
+export interface AnalyzeSentenceResponse extends AnalyzeResult {
+  analysisId: string;
+}

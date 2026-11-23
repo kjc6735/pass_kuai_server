@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { testConfig } from '../../test/config';
 import { MetricsService } from '../metrics/metrics.service';
 import { UsageService } from '../usage/usage.service';
 import { LlmService } from './llm.service';
@@ -32,7 +32,7 @@ describe('LlmService', () => {
   beforeEach(() => {
     create.mockReset();
     metrics = new MetricsService();
-    usage = new UsageService(new ConfigService({ DAILY_BUDGET_USD: '1' }));
+    usage = new UsageService(testConfig({ DAILY_BUDGET_USD: '1' }));
     service = new LlmService(
       { messages: { create } } as unknown as Anthropic,
       metrics,
@@ -51,16 +51,16 @@ describe('LlmService', () => {
 
   const metricText = () => metrics.registry.metrics();
 
-  it('정상 호출은 비용을 더하고, 기기 번호와 응답 ID를 로그에 남긴다', async () => {
+  it('정상 호출은 비용을 더하고, 사용자 ID와 응답 ID를 로그에 남긴다', async () => {
     create.mockResolvedValueOnce(reply());
 
-    await service.createMessage('lookup', PARAMS, { deviceId: 'dev-1' });
+    await service.createMessage('lookup', PARAMS, { userId: 'user-1' });
 
     expect(usage.todaySpentUsd).toBeCloseTo((100 + 200 * 5) / 1e6, 10);
     const line = JSON.parse(logs[0]);
     expect(line).toMatchObject({
       outcome: 'ok',
-      deviceId: 'dev-1',
+      userId: 'user-1',
       messageId: 'msg_123',
       stopReason: 'end_turn',
     });
