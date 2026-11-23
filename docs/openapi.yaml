@@ -1,0 +1,840 @@
+openapi: 3.0.3
+info:
+  title: pass_kuai API (1차)
+  version: 0.1.0
+  description: |
+    디자인 시안 "최종" 1~7번(6번 문법 카드 제외) 화면에 필요한 API.
+    기준: claude.ai 문서 "pass_kuai API 문서"(2026-11-23 수정 제안 반영) + docs/database.md.
+
+    결정 사항 (2026-11-23)
+    - 로그인은 카카오·Apple·Google만. 아이디·비밀번호 없음. 이메일은 받지도 저장하지도 않음(2026-11-23).
+    - 앱은 온라인 전용. 단어장·복습의 원본은 서버. 단어·문장은 analysisId + 위치로만 저장(내용은 서버가 분석 결과에서 복사).
+    - 복습 단계·다음 복습일은 서버가 계산. 앱은 결과만 보냄.
+
+    이 문서에 넣지 않은 것
+    - POST /auth/device: 계정 토큰으로 바꾸면서 지움
+    - POST /analyze/word: 앱에서 부르는 곳이 없음
+    - 설정 API: 복습 알림은 기기 로컬 알림이라 기기에만 저장
+    - 약관 동의(agreements): 가장 나중에 정함
+    - 문법 카드(grammar), AI 통화: 2차
+    - GET /metrics: 운영 내부용(앱 API 아님)
+
+    공통 규칙
+    - 시간은 ISO 8601 UTC. 하루 한도와 "오늘 복습"은 한국 시간 0시 기준.
+    - 계정·분석 결과 ID는 UUID 문자열, 저장한 단어·문장 ID는 정수.
+    - 401이 오면 앱은 POST /auth/refresh를 한 번 부르고 다시 보냄. refresh도 실패하면 로그인 화면.
+servers:
+  - url: http://localhost:3000
+    description: 개발
+  - url: https://api.pass-kuai.jaechan.com
+    description: 운영 (예정)
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+    description: 소셜 로그인 · 토큰 · 계정 (시안 1, 7번)
+  - name: analyze
+    description: 문장 분석 (시안 3번)
+  - name: stt
+    description: 발음 연습 (시안 3번)
+  - name: vocab
+    description: 단어장 (시안 2, 6번)
+  - name: review
+    description: 복습 (시안 4, 5번)
+  - name: usage
+    description: 사용량
+  - name: ops
+    description: 운영
+
+paths:
+  /auth/social/{provider}:
+    post:
+      tags: [auth]
+      summary: 소셜 로그인 (처음이면 가입)
+      description: |
+        서버가 받은 토큰을 각 회사 서버에 보내 확인해요. 카카오는 토큰 정보 API(회원번호와 앱 ID 확인), Google은 tokeninfo, Apple은 authorizationCode를 토큰으로 바꾸는 API.
+        Apple은 authorizationCode도 꼭 보내요(없으면 400). 서버가 Apple refresh token으로 바꿔 저장해 두고, 계정 삭제 때 연결 해제(revoke)에 써요.
+        삭제 대기 중인 계정이면 403 ACCOUNT_DELETED.
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/Provider' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SocialLoginRequestDto' }
+      responses:
+        '200':
+          description: 로그인 또는 새로 가입
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponseDto' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SocialTokenInvalid' }
+        '403': { $ref: '#/components/responses/AccountDeleted' }
+        '503':
+          description: 소셜 회사 서버가 응답하지 않음 (SOCIAL_PROVIDER_UNAVAILABLE)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponseDto' }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: 토큰 다시 받기
+      description: |
+        두 토큰을 모두 새로 줘요. 예전 refreshToken은 바로 무효.
+        이미 쓴 refreshToken이 다시 오면 탈취로 보고 그 로그인 묶음을 모두 끝내요(401 TOKEN_REUSED).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshTokenRequestDto' }
+      responses:
+        '200':
+          description: 새 토큰
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPairDto' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: 로그아웃 (이 기기의 refreshToken 폐기)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshTokenRequestDto' }
+      responses:
+        '204': { description: 로그아웃됨 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me:
+    get:
+      tags: [auth]
+      summary: 내 계정 (24 설정)
+      responses:
+        '200':
+          description: 내 계정
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserDto' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [auth]
+      summary: 계정 삭제 (24-1, 24-2)
+      description: |
+        본인 확인으로 방금 다시 로그인해서 받은 소셜 토큰을 보내요. Apple은 authorizationCode도 꼭 보내요.
+        연결 끊기가 실패하면(503) 계정은 그대로이니 다시 시도하면 돼요.
+        바로 모든 토큰을 끝내고, 카카오 연결 끊기·Apple revoke를 부르고, 계정을 잠가요(deletion_scheduled_at = 30일 뒤).
+        30일이 지나면 서버 기록을 모두 지워요(정리 작업이 1시간마다 돌아요). 그 사이에도 복구·조회는 안 되고, 다시 로그인하면 403 ACCOUNT_DELETED.
+        reason은 계정과 따로, 누구인지 알 수 없게 이유와 날짜만 남겨요.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeleteAccountRequestDto' }
+      responses:
+        '202':
+          description: 삭제 접수
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeleteAccountResponseDto' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/SocialTokenInvalid' }
+        '503':
+          description: 카카오·Apple 연결 끊기 실패 (SOCIAL_PROVIDER_UNAVAILABLE). 계정은 잠기지 않음
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponseDto' }
+
+  /analyze/sentence:
+    post:
+      tags: [analyze]
+      summary: 문장 분석 (1 분석 홈 → 2 문장 상세)
+      description: |
+        하루 분석 횟수에서 1회 빠져요(실패한 요청은 빠지지 않음). 결과는 analysisId로 7일 보관하고, 단어·문장 저장은 이 analysisId와 위치로 해요.
+        같은 사용자가 같은 문장을 다시 넣으면 저장해 둔 결과를 돌려줄 예정이에요(사용자끼리는 나누지 않음).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnalyzeSentenceRequestDto' }
+      responses:
+        '200':
+          description: 분석 결과
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalyzeResultDto' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422':
+          description: AI 출력이 한도에서 끊김 (TEXT_TOO_LONG) 또는 결과가 잘못됨 (ANALYZE_FAILED). message를 그대로 보여줘요
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponseDto' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/BudgetExceeded' }
+
+  /stt/transcribe:
+    post:
+      tags: [stt]
+      summary: 발음 연습 (3) — 음성 인식 + 목표 문장과 비교
+      description: |
+        녹음 파일은 인식에만 쓰고 저장하지 않아요. 0.5초 미만이거나 너무 조용한 녹음은 앱이 먼저 걸러요.
+        하루 녹음 시간은 지금 durationMs로 세요(나중에 서버가 파일에서 직접 잴 예정). 인식에 실패하면 빠지지 않아요.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/TranscribeRequestDto' }
+      responses:
+        '200':
+          description: 인식 결과
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TranscribeResponseDto' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413':
+          description: 2MB 초과 (FILE_TOO_LARGE)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponseDto' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/BudgetExceeded' }
+
+  /vocab/words:
+    get:
+      tags: [vocab]
+      summary: 저장한 단어 (6 단어장)
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 최근 저장한 것부터
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VocabWordListDto' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [vocab]
+      summary: 단어 저장 (2 문장 상세)
+      description: |
+        분석 결과에서 저장하거나, 저장한 문장 속 단어를 저장해요. 앱은 내용(한자·병음·뜻)을 보내지 않아요.
+        같은 단어·병음·뜻이 이미 있으면 200 + created false. 저장하면 단어 카드 복습 상태(0단계, 바로 복습)가 생겨요.
+        분석 결과가 7일이 지나 지워졌거나 위치가 틀리면 404 NOT_FOUND.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveWordRequestDto' }
+      responses:
+        '201':
+          description: 새로 저장
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaveWordResponseDto' }
+        '200':
+          description: 이미 있음
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaveWordResponseDto' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /vocab/words/{id}:
+    delete:
+      tags: [vocab]
+      summary: 단어 삭제 (복습 기록도 함께)
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      responses:
+        '204': { description: 삭제됨 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /vocab/sentences:
+    get:
+      tags: [vocab]
+      summary: 저장한 문장 (6 단어장 문장 탭)
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 최근 저장한 것부터
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VocabSentenceListDto' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [vocab]
+      summary: 문장 저장 (2 문장 상세)
+      description: |
+        같은 원문은 한 번만 저장돼요(처음 번역 유지). 저장하면 문장 카드 복습 상태가 생기고 받아쓰기 대상이 돼요.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveSentenceRequestDto' }
+      responses:
+        '201':
+          description: 새로 저장
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaveSentenceResponseDto' }
+        '200':
+          description: 이미 있음
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaveSentenceResponseDto' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /vocab/sentences/{id}:
+    delete:
+      tags: [vocab]
+      summary: 문장 삭제 (문장 카드·받아쓰기 기록도 함께)
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      responses:
+        '204': { description: 삭제됨 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /me/review/summary:
+    get:
+      tags: [review]
+      summary: 모드별 오늘 복습할 수 (1 홈 카드, 4 복습 시작, 7 모드 선택, 탭 배지)
+      responses:
+        '200':
+          description: 오늘(한국 시간 23:59까지) 복습할 수
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewSummaryDto' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/review/due:
+    get:
+      tags: [review]
+      summary: 모드별 복습할 카드 (5, 8, 9)
+      description: |
+        word·sentence: 오늘 복습할 카드, 오래 밀린 것부터, 처음 보는 카드가 맨 앞.
+        dictation: 저장한 문장 전체, 오래 안 푼 것부터. retry: 받아쓰기에서 틀린 문장.
+      parameters:
+        - name: mode
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/ReviewMode' }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: 카드 목록
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewDueListDto' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/review/logs:
+    post:
+      tags: [review]
+      summary: 복습 결과 보내기 (5, 8-1, 10, 11) — 카드 하나 끝날 때마다
+      description: |
+        서버가 0→1→3→7→14→30일(틀리면 0) 규칙으로 다음 복습일을 계산해요. 앱은 단계·날짜를 보내지 않아요.
+        같은 복습 안에서 다시 나온 카드는 repeat true로 보내고, 단계에는 반영하지 않아요.
+        받아쓰기에서 wrong이면 inRetry true, retry 모드에서 correct면 false. 받아쓰기 채점은 앱 안에서 해요(AI 안 씀).
+        지운 항목이면 404 NOT_FOUND.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewResultRequestDto' }
+      responses:
+        '200':
+          description: 바뀐 복습 상태
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewStateDto' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /me/usage:
+    get:
+      tags: [usage]
+      summary: 오늘 쓴 양과 한도 (1 분석 홈)
+      responses:
+        '200':
+          description: 오늘 사용량
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsageDto' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /health:
+    get:
+      tags: [ops]
+      summary: 살아 있는지 확인
+      security: []
+      responses:
+        '200':
+          description: 정상
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: accessToken (30분). sub = user id
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: 앞 페이지의 nextCursor. 비우면 처음부터
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
+    ItemId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+
+  responses:
+    BadRequest:
+      description: 입력 형식이 틀림 (INVALID_INPUT)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponseDto' }
+    Unauthorized:
+      description: 토큰 없음·만료 (UNAUTHORIZED) 또는 이미 쓴 refreshToken (TOKEN_REUSED)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponseDto' }
+    SocialTokenInvalid:
+      description: 소셜 토큰 검증 실패·만료 (SOCIAL_TOKEN_INVALID)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponseDto' }
+    AccountDeleted:
+      description: 삭제 요청 후 30일 유예 중인 계정 (ACCOUNT_DELETED)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponseDto' }
+    NotFound:
+      description: 없는 항목 (NOT_FOUND)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponseDto' }
+    TooManyRequests:
+      description: 분당 요청 초과 (RATE_LIMITED) 또는 하루 한도 다 씀 (DAILY_LIMIT, resetsAt 포함)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponseDto' }
+    BudgetExceeded:
+      description: 서비스 하루 AI 비용 상한 (BUDGET_EXCEEDED)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponseDto' }
+
+  schemas:
+    # ---------- 공통 ----------
+    ErrorCode:
+      type: string
+      enum:
+        - INVALID_INPUT
+        - UNAUTHORIZED
+        - SOCIAL_TOKEN_INVALID
+        - SOCIAL_PROVIDER_UNAVAILABLE
+        - TOKEN_REUSED
+        - ACCOUNT_DELETED
+        - NOT_FOUND
+        - FILE_TOO_LARGE
+        - TEXT_TOO_LONG
+        - ANALYZE_FAILED
+        - RATE_LIMITED
+        - DAILY_LIMIT
+        - BUDGET_EXCEEDED
+        - INTERNAL
+    ErrorResponseDto:
+      type: object
+      description: 모든 에러의 모양. message는 사용자에게 그대로 보여줘도 되는 한국어, 앱은 code로 분기
+      required: [statusCode, code, message]
+      properties:
+        statusCode: { type: integer, example: 429 }
+        code: { $ref: '#/components/schemas/ErrorCode' }
+        message: { type: string, example: 오늘 분석 횟수를 다 썼어요. 내일 다시 해 주세요. }
+        resetsAt:
+          type: string
+          format: date-time
+          description: DAILY_LIMIT일 때만
+    Provider:
+      type: string
+      enum: [kakao, apple, google]
+    Syllable:
+      type: object
+      required: [hanzi, pinyin, tone]
+      properties:
+        hanzi: { type: string, example: 咖 }
+        pinyin: { type: string, example: kā }
+        tone:
+          type: integer
+          minimum: 0
+          maximum: 4
+          description: 1~4성, 경성은 0
+
+    # ---------- auth ----------
+    SocialLoginRequestDto:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: Apple·Google은 idToken, 카카오는 accessToken
+        authorizationCode:
+          type: string
+          description: Apple만. 계정 삭제 때 연결 해제에 필요
+    RefreshTokenRequestDto:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    TokenPairDto:
+      type: object
+      required: [accessToken, refreshToken]
+      properties:
+        accessToken: { type: string, description: JWT, 30분 }
+        refreshToken: { type: string, description: 60일, 쓸 때마다 새로 발급. 앱 안전 저장소에 보관 }
+    UserDto:
+      type: object
+      required: [id, provider, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        provider: { $ref: '#/components/schemas/Provider' }
+        createdAt: { type: string, format: date-time }
+    AuthResponseDto:
+      allOf:
+        - $ref: '#/components/schemas/TokenPairDto'
+        - type: object
+          required: [user, isNewUser]
+          properties:
+            user: { $ref: '#/components/schemas/UserDto' }
+            isNewUser: { type: boolean }
+    DeleteReason:
+      type: string
+      enum: [not_using, not_enough_call_time, missing_feature, privacy, other]
+    DeleteAccountRequestDto:
+      type: object
+      required: [confirm, socialToken]
+      properties:
+        confirm:
+          type: boolean
+          enum: [true]
+          description: 24-1 "모두 지워지는 걸 확인했어요"
+        socialToken:
+          type: string
+          description: 방금 다시 로그인해서 받은 idToken(Apple·Google) 또는 accessToken(카카오)
+        authorizationCode:
+          type: string
+          description: Apple만. 다시 로그인에서 받은 값
+        reason: { $ref: '#/components/schemas/DeleteReason' }
+    DeleteAccountResponseDto:
+      type: object
+      required: [deleteScheduledAt]
+      properties:
+        deleteScheduledAt: { type: string, format: date-time, description: 요청 시각 + 30일. 이때 서버 기록을 모두 지움 }
+
+    # ---------- analyze ----------
+    AnalyzeSentenceRequestDto:
+      type: object
+      required: [sentence]
+      properties:
+        sentence:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          example: 我想喝一杯咖啡。
+    AnalyzedWordDto:
+      type: object
+      required: [text, pinyin, meaning, syllables]
+      properties:
+        text: { type: string, example: 咖啡 }
+        pinyin: { type: string, example: kāfēi }
+        meaning: { type: string, example: 커피 }
+        pos: { type: string, description: 품사. 없을 수 있음, example: 명사 }
+        syllables:
+          type: array
+          items: { $ref: '#/components/schemas/Syllable' }
+    SentenceAnalysisDto:
+      type: object
+      required: [sentence, translation, words]
+      properties:
+        sentence: { type: string, example: 我想喝一杯咖啡。 }
+        translation: { type: string, example: 커피 한 잔 마시고 싶어요. }
+        words:
+          type: array
+          items: { $ref: '#/components/schemas/AnalyzedWordDto' }
+    AnalyzeResultDto:
+      type: object
+      required: [analysisId, sentences]
+      properties:
+        analysisId: { type: string, format: uuid, description: 단어·문장 저장에 씀. 7일 보관 }
+        sentences:
+          type: array
+          items: { $ref: '#/components/schemas/SentenceAnalysisDto' }
+
+    # ---------- stt ----------
+    TranscribeRequestDto:
+      type: object
+      required: [file, durationMs]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: 음성 1개, 2MB 이하. m4a(AAC)·mp3·wav·webm·ogg. 앱은 16kHz 모노 m4a
+        durationMs: { type: integer, minimum: 300, maximum: 30000 }
+        target: { type: string, maxLength: 200, description: 목표 문장. 없으면 인식 결과만 }
+    SyllableMatchDto:
+      type: object
+      required: [hanzi, pinyin, matched]
+      properties:
+        hanzi: { type: string, example: 一 }
+        pinyin: { type: string, description: 성조 표시가 있는 병음, example: yì }
+        matched: { type: boolean }
+    PronunciationComparisonDto:
+      type: object
+      required: [target, recognized, syllables, matchRate, extraCount]
+      properties:
+        target: { type: string, example: 我想喝一杯咖啡 }
+        recognized: { type: string, example: 我想喝杯咖啡 }
+        syllables:
+          type: array
+          description: 목표 문장의 음절마다 일치 여부 (성조 뺀 병음으로 비교)
+          items: { $ref: '#/components/schemas/SyllableMatchDto' }
+        matchRate: { type: number, minimum: 0, maximum: 1, example: 0.857 }
+        extraCount: { type: integer, minimum: 0, description: 목표에 없는데 더 들린 음절 수 }
+    TranscribeResponseDto:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, example: 我想喝杯咖啡 }
+        comparison: { $ref: '#/components/schemas/PronunciationComparisonDto' }
+
+    # ---------- vocab ----------
+    VocabWordDto:
+      type: object
+      required: [id, text, pinyin, meaning, syllables, sourceSentence, savedAt]
+      properties:
+        id: { type: integer, format: int64, example: 1024 }
+        text: { type: string, example: 喝 }
+        pinyin: { type: string, example: hē }
+        meaning: { type: string, example: 마시다 }
+        pos: { type: string, example: 동사 }
+        syllables:
+          type: array
+          items: { $ref: '#/components/schemas/Syllable' }
+        sourceSentence:
+          type: string
+          nullable: true
+          description: 저장할 때의 문장 (카드 뒷면 예문)
+          example: 我想喝一杯咖啡。
+        savedAt: { type: string, format: date-time }
+    VocabWordListDto:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/VocabWordDto' }
+        nextCursor: { type: string, nullable: true }
+    SaveWordFromAnalysisDto:
+      type: object
+      required: [analysisId, sentenceIndex, wordIndex]
+      properties:
+        analysisId: { type: string, format: uuid }
+        sentenceIndex: { type: integer, minimum: 0 }
+        wordIndex: { type: integer, minimum: 0 }
+    SaveWordFromSentenceDto:
+      type: object
+      required: [sentenceId, position]
+      properties:
+        sentenceId: { type: integer, format: int64, description: 저장한 문장 id }
+        position: { type: integer, minimum: 0, description: 문장 속 단어 순서 }
+    SaveWordRequestDto:
+      oneOf:
+        - $ref: '#/components/schemas/SaveWordFromAnalysisDto'
+        - $ref: '#/components/schemas/SaveWordFromSentenceDto'
+    SaveWordResponseDto:
+      type: object
+      required: [item, created]
+      properties:
+        item: { $ref: '#/components/schemas/VocabWordDto' }
+        created: { type: boolean, description: false면 "이미 단어장에 있어요" }
+    SentenceWordDto:
+      type: object
+      required: [position, text, pinyin, meaning, syllables]
+      properties:
+        position: { type: integer, minimum: 0 }
+        text: { type: string, example: 一杯 }
+        pinyin: { type: string, example: yì bēi }
+        meaning: { type: string, example: 한 잔 }
+        pos: { type: string }
+        syllables:
+          type: array
+          items: { $ref: '#/components/schemas/Syllable' }
+    VocabSentenceDto:
+      type: object
+      required: [id, sentence, translation, pinyin, words, savedAt]
+      properties:
+        id: { type: integer, format: int64, example: 31 }
+        sentence: { type: string, example: 我想喝一杯咖啡。 }
+        translation: { type: string, example: 커피 한 잔 마시고 싶어요. }
+        pinyin: { type: string, description: 단어 병음을 공백으로 이은 것, example: wǒ xiǎng hē yì bēi kāfēi }
+        words:
+          type: array
+          description: 문장 속 단어, 순서대로 (문장 카드 "단어 보기"와 뒷면)
+          items: { $ref: '#/components/schemas/SentenceWordDto' }
+        savedAt: { type: string, format: date-time }
+    VocabSentenceListDto:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/VocabSentenceDto' }
+        nextCursor: { type: string, nullable: true }
+    SaveSentenceRequestDto:
+      type: object
+      required: [analysisId, sentenceIndex]
+      properties:
+        analysisId: { type: string, format: uuid }
+        sentenceIndex: { type: integer, minimum: 0 }
+    SaveSentenceResponseDto:
+      type: object
+      required: [item, created]
+      properties:
+        item: { $ref: '#/components/schemas/VocabSentenceDto' }
+        created: { type: boolean }
+
+    # ---------- review ----------
+    ReviewMode:
+      type: string
+      description: |
+        word = 단어 카드(5), sentence = 문장 카드(8), dictation = 받아쓰기(9~11), retry = 틀린 문장 다시 하기(7)
+      enum: [word, sentence, dictation, retry]
+    ItemType:
+      type: string
+      enum: [word, sentence]
+    ReviewCount:
+      type: object
+      required: [due, total]
+      properties:
+        due: { type: integer, minimum: 0 }
+        total: { type: integer, minimum: 0 }
+    ReviewSummaryDto:
+      type: object
+      required: [word, sentence, dictation, retry]
+      properties:
+        word: { $ref: '#/components/schemas/ReviewCount' }
+        sentence: { $ref: '#/components/schemas/ReviewCount' }
+        dictation:
+          type: object
+          description: 받아쓰기는 단계가 없어서 저장 문장 수만
+          required: [total]
+          properties:
+            total: { type: integer, minimum: 0 }
+        retry: { $ref: '#/components/schemas/ReviewCount' }
+    ReviewCardDto:
+      type: object
+      required: [itemType, itemId, card]
+      properties:
+        itemType: { $ref: '#/components/schemas/ItemType' }
+        itemId: { type: integer, format: int64 }
+        level:
+          type: integer
+          minimum: 0
+          maximum: 5
+          description: word·sentence 모드만
+        nextReviewAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: word·sentence 모드만. null = 처음 보는 카드
+        card:
+          description: itemType에 따라 단어 또는 문장 항목 그대로
+          oneOf:
+            - $ref: '#/components/schemas/VocabWordDto'
+            - $ref: '#/components/schemas/VocabSentenceDto'
+    ReviewDueListDto:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ReviewCardDto' }
+    ReviewResult:
+      type: string
+      description: 카드 모드(word·sentence)는 known | unknown, 받아쓰기·다시 하기는 correct | wrong
+      enum: [known, unknown, correct, wrong]
+    ReviewResultRequestDto:
+      type: object
+      required: [mode, itemType, itemId, result]
+      properties:
+        mode: { $ref: '#/components/schemas/ReviewMode' }
+        itemType: { $ref: '#/components/schemas/ItemType' }
+        itemId: { type: integer, format: int64 }
+        result: { $ref: '#/components/schemas/ReviewResult' }
+        repeat:
+          type: boolean
+          default: false
+          description: 같은 복습 안에서 다시 나온 카드. true면 단계에 반영하지 않음
+    ReviewStateDto:
+      type: object
+      required: [mode, itemType, itemId]
+      properties:
+        mode: { $ref: '#/components/schemas/ReviewMode' }
+        itemType: { $ref: '#/components/schemas/ItemType' }
+        itemId: { type: integer, format: int64 }
+        level: { type: integer, minimum: 0, maximum: 5, description: word·sentence 모드만 }
+        nextReviewAt: { type: string, format: date-time, nullable: true, description: word·sentence 모드만 }
+        lastAt: { type: string, format: date-time, description: dictation·retry 모드만 }
+        inRetry: { type: boolean, description: dictation·retry 모드만 }
+
+    # ---------- usage ----------
+    UsageCount:
+      type: object
+      required: [used, limit]
+      properties:
+        used: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 0, description: 0이면 한도 없음 }
+    UsageDto:
+      type: object
+      required: [resetsAt, analyze, pronunciationSeconds]
+      properties:
+        resetsAt: { type: string, format: date-time, description: 다음 한국 시간 0시 }
+        analyze: { $ref: '#/components/schemas/UsageCount' }
+        pronunciationSeconds: { $ref: '#/components/schemas/UsageCount' }
