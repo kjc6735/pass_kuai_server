@@ -20,11 +20,11 @@ import {
   VocabSentenceList,
 } from './types/vocab-sentence';
 
-const WITH_WORDS = {
+export const WITH_WORDS = {
   words: { orderBy: { position: 'asc' } },
 } satisfies Prisma.VocabSentenceInclude;
 
-type SentenceRow = VocabSentence & { words: VocabSentenceWord[] };
+export type SentenceRow = VocabSentence & { words: VocabSentenceWord[] };
 
 @Injectable()
 export class VocabSentenceService {
@@ -43,7 +43,7 @@ export class VocabSentenceService {
       take: limit + 1,
       include: WITH_WORDS,
     });
-    return toPage(rows, limit, toItem);
+    return toPage(rows, limit, toSentenceItem);
   }
 
   async saveFromAnalysis(
@@ -75,7 +75,7 @@ export class VocabSentenceService {
         },
         include: WITH_WORDS,
       });
-      return { item: toItem(row), created: true };
+      return { item: toSentenceItem(row), created: true };
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
     }
@@ -85,7 +85,7 @@ export class VocabSentenceService {
       },
       include: WITH_WORDS,
     });
-    return { item: toItem(existing), created: false };
+    return { item: toSentenceItem(existing), created: false };
   }
 
   async remove(userId: string, id: bigint): Promise<void> {
@@ -96,7 +96,7 @@ export class VocabSentenceService {
   }
 }
 
-function toItem(row: SentenceRow): VocabSentenceItem {
+export function toSentenceItem(row: SentenceRow): VocabSentenceItem {
   return {
     id: Number(row.id),
     sentence: row.sentence,

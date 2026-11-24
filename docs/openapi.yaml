@@ -316,6 +316,9 @@ paths:
     get:
       tags: [review]
       summary: 모드별 오늘 복습할 수 (1 홈 카드, 4 복습 시작, 7 모드 선택, 탭 배지)
+      description: |
+        due = 오늘 남은 장수 = min(오늘 안 본 복습 대상 수, 100 − 오늘 본 수). GET /me/review/due가 주는 장수와 같아요.
+        total: word·sentence·dictation은 저장한 수, retry는 틀린 문장 수(오늘 푼 것 포함).
       responses:
         '200':
           description: 오늘(한국 시간 23:59까지) 복습할 수
@@ -329,8 +332,12 @@ paths:
       tags: [review]
       summary: 모드별 복습할 카드 (5, 8, 9)
       description: |
-        word·sentence: 오늘 복습할 카드, 오래 밀린 것부터, 처음 보는 카드가 맨 앞.
-        dictation: 저장한 문장 전체, 오래 안 푼 것부터. retry: 받아쓰기에서 틀린 문장.
+        word·sentence: 오늘 복습할 카드, 처음 보는 카드가 맨 앞, 그다음 오래 밀린 것부터.
+        dictation: 저장한 문장 전체, 안 푼 것 먼저, 그다음 오래 안 푼 것부터. retry: 받아쓰기에서 틀린 문장, 오래전에 틀린 것부터.
+
+        하루 한도: 모드별로 하루 100장(한국 시간 0시 기준). dictation과 retry는 합쳐서 100장.
+        오늘 본 카드는 오늘 다시 나오지 않아요. 그래서 중간에 그만두고 다시 부르면 남은 카드만 와요(커서 없음).
+        100장을 넘게 밀렸으면 오늘 100장만, 나머지는 내일부터.
       parameters:
         - name: mode
           in: query
@@ -338,7 +345,7 @@ paths:
           schema: { $ref: '#/components/schemas/ReviewMode' }
         - name: limit
           in: query
-          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100, description: 오늘 남은 장수보다 많으면 남은 장수만 }
       responses:
         '200':
           description: 카드 목록
@@ -354,9 +361,12 @@ paths:
       summary: 복습 결과 보내기 (5, 8-1, 10, 11) — 카드 하나 끝날 때마다
       description: |
         서버가 0→1→3→7→14→30일(틀리면 0) 규칙으로 다음 복습일을 계산해요. 앱은 단계·날짜를 보내지 않아요.
-        같은 복습 안에서 다시 나온 카드는 repeat true로 보내고, 단계에는 반영하지 않아요.
-        받아쓰기에서 wrong이면 inRetry true, retry 모드에서 correct면 false. 받아쓰기 채점은 앱 안에서 해요(AI 안 씀).
-        지운 항목이면 404 NOT_FOUND.
+        known: 단계 +1(최대 5), 다음 복습 = 오늘 한국 시간 0시 + 간격 일수. unknown: 단계 0, 다음 복습 = 내일 0시.
+        같은 카드는 모드별로 하루에 한 번만 반영해요. 같은 날 다시 보내면(재시도 등) 바꾸지 않고 지금 상태를 200으로 돌려줘요.
+        받아쓰기·다시 하기에서 wrong이면 inRetry true, retry 모드에서 correct면 false. dictation 모드에서 correct면 inRetry는 그대로예요.
+        받아쓰기 채점은 앱 안에서 해요(AI 안 씀).
+        mode와 itemType·result 짝: word → word + known|unknown, sentence → sentence + known|unknown, dictation·retry → sentence + correct|wrong. 안 맞으면 400 INVALID_INPUT.
+        남의 항목이나 지운 항목이면 404 NOT_FOUND.
       requestBody:
         required: true
         content:
@@ -761,12 +771,7 @@ components:
       properties:
         word: { $ref: '#/components/schemas/ReviewCount' }
         sentence: { $ref: '#/components/schemas/ReviewCount' }
-        dictation:
-          type: object
-          description: 받아쓰기는 단계가 없어서 저장 문장 수만
-          required: [total]
-          properties:
-            total: { type: integer, minimum: 0 }
+        dictation: { $ref: '#/components/schemas/ReviewCount' }
         retry: { $ref: '#/components/schemas/ReviewCount' }
     ReviewCardDto:
       type: object
@@ -808,10 +813,6 @@ components:
         itemType: { $ref: '#/components/schemas/ItemType' }
         itemId: { type: integer, format: int64 }
         result: { $ref: '#/components/schemas/ReviewResult' }
-        repeat:
-          type: boolean
-          default: false
-          description: 같은 복습 안에서 다시 나온 카드. true면 단계에 반영하지 않음
     ReviewStateDto:
       type: object
       required: [mode, itemType, itemId]
@@ -821,7 +822,7 @@ components:
         itemId: { type: integer, format: int64 }
         level: { type: integer, minimum: 0, maximum: 5, description: word·sentence 모드만 }
         nextReviewAt: { type: string, format: date-time, nullable: true, description: word·sentence 모드만 }
-        lastAt: { type: string, format: date-time, description: dictation·retry 모드만 }
+        lastAt: { type: string, format: date-time, nullable: true, description: dictation·retry 모드만 }
         inRetry: { type: boolean, description: dictation·retry 모드만 }
 
     # ---------- usage ----------

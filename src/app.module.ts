@@ -13,6 +13,7 @@ import { HealthController } from './health/health.controller';
 import { LlmModule } from './llm/llm.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { SttModule } from './stt/stt.module';
+import { ReviewModule } from './review/review.module';
 import { UsageModule } from './usage/usage.module';
 import { VocabModule } from './vocab/vocab.module';
 import { validateEnv, type EnvConfig } from './config/env.schema';
@@ -62,6 +63,7 @@ export class AppModule {
         AnalyzeModule,
         SttModule,
         VocabModule,
+        ReviewModule,
       ],
     };
   }
