@@ -41,7 +41,7 @@ export class VocabWordService {
       orderBy: [{ savedAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
     });
-    return toPage(rows, limit, toItem);
+    return toPage(rows, limit, toWordItem);
   }
 
   async save(userId: string, dto: SaveWordRequestDto): Promise<SaveWordResult> {
@@ -124,7 +124,7 @@ export class VocabWordService {
           syllables: syllables as Prisma.InputJsonValue,
         },
       });
-      return { item: toItem(row), created: true };
+      return { item: toWordItem(row), created: true };
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
     }
@@ -138,7 +138,7 @@ export class VocabWordService {
         },
       },
     });
-    return { item: toItem(existing), created: false };
+    return { item: toWordItem(existing), created: false };
   }
 
   async remove(userId: string, id: bigint): Promise<void> {
@@ -149,7 +149,7 @@ export class VocabWordService {
   }
 }
 
-function toItem(row: VocabWord): VocabWordItem {
+export function toWordItem(row: VocabWord): VocabWordItem {
   return {
     id: Number(row.id),
     text: row.word,
