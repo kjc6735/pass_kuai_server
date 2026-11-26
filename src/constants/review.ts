@@ -1,5 +1,6 @@
 export const SRS_MAX_LEVEL = 5;
 export const SRS_INTERVAL_DAYS = [0, 1, 3, 7, 14, 30] as const;
+export const SRS_LAPSE_DROP = 2;
 
 export const REVIEW_DAILY_LIMIT = 100;
 

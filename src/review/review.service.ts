@@ -56,7 +56,8 @@ export class ReviewService {
       this.prisma.$queryRaw<{ total: number; due: number; done: number }[]>`
         SELECT
           count(*)::int AS total,
-          count(*) FILTER (WHERE next_review_at IS NULL OR next_review_at < ${tomorrow})::int AS due,
+          count(*) FILTER (WHERE suspended_at IS NULL
+            AND (next_review_at IS NULL OR next_review_at < ${tomorrow}))::int AS due,
           count(*) FILTER (WHERE last_reviewed_at >= ${today})::int AS done
         FROM vocab_words
         WHERE user_id = ${userId}::uuid`,
@@ -73,12 +74,15 @@ export class ReviewService {
       >`
         SELECT
           count(*)::int AS total,
-          count(*) FILTER (WHERE card_next_review_at IS NULL OR card_next_review_at < ${tomorrow})::int AS card_due,
+          count(*) FILTER (WHERE card_suspended_at IS NULL
+            AND (card_next_review_at IS NULL OR card_next_review_at < ${tomorrow}))::int AS card_due,
           count(*) FILTER (WHERE card_last_reviewed_at >= ${today})::int AS card_done,
-          count(*) FILTER (WHERE dictation_last_at IS NULL OR dictation_last_at < ${today})::int AS dictation_open,
+          count(*) FILTER (WHERE dictation_suspended_at IS NULL
+            AND (dictation_last_at IS NULL OR dictation_last_at < ${today}))::int AS dictation_open,
           count(*) FILTER (WHERE dictation_last_at >= ${today})::int AS dictation_done,
           count(*) FILTER (WHERE dictation_wrong_at IS NOT NULL)::int AS wrong_total,
-          count(*) FILTER (WHERE dictation_wrong_at IS NOT NULL
+          count(*) FILTER (WHERE dictation_suspended_at IS NULL
+            AND dictation_wrong_at IS NOT NULL
             AND (dictation_last_at IS NULL OR dictation_last_at < ${today}))::int AS wrong_open
         FROM vocab_sentences
         WHERE user_id = ${userId}::uuid`,
@@ -127,6 +131,7 @@ export class ReviewService {
     const rows = await this.prisma.vocabWord.findMany({
       where: {
         userId,
+        suspendedAt: null,
         OR: [{ nextReviewAt: null }, { nextReviewAt: { lt: tomorrow } }],
       },
       orderBy: [
@@ -141,6 +146,7 @@ export class ReviewService {
         itemId: Number(row.id),
         level: row.srsLevel,
         nextReviewAt: row.nextReviewAt?.toISOString() ?? null,
+        lapses: row.lapses,
         card: toWordItem(row),
       })),
     };
@@ -159,6 +165,7 @@ export class ReviewService {
     const rows = await this.prisma.vocabSentence.findMany({
       where: {
         userId,
+        cardSuspendedAt: null,
         OR: [
           { cardNextReviewAt: null },
           { cardNextReviewAt: { lt: tomorrow } },
@@ -177,6 +184,7 @@ export class ReviewService {
         itemId: Number(row.id),
         level: row.cardSrsLevel,
         nextReviewAt: row.cardNextReviewAt?.toISOString() ?? null,
+        lapses: row.cardLapses,
         card: toSentenceItem(row),
       })),
     };
@@ -193,19 +201,20 @@ export class ReviewService {
     });
     const take = Math.min(limit, REVIEW_DAILY_LIMIT - done);
     if (take <= 0) return { items: [] };
-    const notToday = {
+    const open = {
+      dictationSuspendedAt: null,
       OR: [{ dictationLastAt: null }, { dictationLastAt: { lt: today } }],
     };
     const rows: SentenceRow[] =
       mode === ReviewMode.RETRY
         ? await this.prisma.vocabSentence.findMany({
-            where: { userId, dictationWrongAt: { not: null }, ...notToday },
+            where: { userId, dictationWrongAt: { not: null }, ...open },
             orderBy: [{ dictationWrongAt: 'asc' }, { id: 'asc' }],
             include: WITH_WORDS,
             take,
           })
         : await this.prisma.vocabSentence.findMany({
-            where: { userId, ...notToday },
+            where: { userId, ...open },
             orderBy: [
               { dictationLastAt: { sort: 'asc', nulls: 'first' } },
               { id: 'asc' },
@@ -218,6 +227,7 @@ export class ReviewService {
         (row): ReviewCard => ({
           itemType: ItemType.SENTENCE,
           itemId: Number(row.id),
+          lapses: row.dictationLapses,
           card: toSentenceItem(row),
         }),
       ),
@@ -253,11 +263,9 @@ export class ReviewService {
     if (!row) throw new AppException(ErrorCode.NOT_FOUND);
     if (reviewedToday(row.lastReviewedAt, now)) return wordState(row);
 
-    const next = nextCardState(
-      row.srsLevel,
-      result === ReviewResult.KNOWN,
-      now,
-    );
+    const known = result === ReviewResult.KNOWN;
+    const next = nextCardState(row.srsLevel, known, now);
+    const lapses = known ? row.lapses : row.lapses + 1;
     const { count } = await this.prisma.vocabWord.updateMany({
       where: {
         id,
@@ -269,6 +277,7 @@ export class ReviewService {
         srsLevel: next.level,
         nextReviewAt: next.nextReviewAt,
         lastReviewedAt: now,
+        lapses,
       },
     });
     if (count === 0) {
@@ -282,6 +291,7 @@ export class ReviewService {
       ...row,
       srsLevel: next.level,
       nextReviewAt: next.nextReviewAt,
+      lapses,
     });
   }
 
@@ -295,22 +305,25 @@ export class ReviewService {
       where: { id, userId },
     });
     if (!row) throw new AppException(ErrorCode.NOT_FOUND);
-    const state = (level: number, nextReviewAt: Date | null): ReviewState => ({
+    const state = (
+      level: number,
+      nextReviewAt: Date | null,
+      lapses: number,
+    ): ReviewState => ({
       mode: ReviewMode.SENTENCE,
       itemType: ItemType.SENTENCE,
       itemId: Number(id),
+      lapses,
       level,
       nextReviewAt: nextReviewAt?.toISOString() ?? null,
     });
     if (reviewedToday(row.cardLastReviewedAt, now)) {
-      return state(row.cardSrsLevel, row.cardNextReviewAt);
+      return state(row.cardSrsLevel, row.cardNextReviewAt, row.cardLapses);
     }
 
-    const next = nextCardState(
-      row.cardSrsLevel,
-      result === ReviewResult.KNOWN,
-      now,
-    );
+    const known = result === ReviewResult.KNOWN;
+    const next = nextCardState(row.cardSrsLevel, known, now);
+    const lapses = known ? row.cardLapses : row.cardLapses + 1;
     const { count } = await this.prisma.vocabSentence.updateMany({
       where: {
         id,
@@ -322,6 +335,7 @@ export class ReviewService {
         cardSrsLevel: next.level,
         cardNextReviewAt: next.nextReviewAt,
         cardLastReviewedAt: now,
+        cardLapses: lapses,
       },
     });
     if (count === 0) {
@@ -329,9 +343,13 @@ export class ReviewService {
         where: { id, userId },
       });
       if (!latest) throw new AppException(ErrorCode.NOT_FOUND);
-      return state(latest.cardSrsLevel, latest.cardNextReviewAt);
+      return state(
+        latest.cardSrsLevel,
+        latest.cardNextReviewAt,
+        latest.cardLapses,
+      );
     }
-    return state(next.level, next.nextReviewAt);
+    return state(next.level, next.nextReviewAt, lapses);
   }
 
   private async recordDictation(
@@ -345,35 +363,116 @@ export class ReviewService {
       where: { id, userId },
     });
     if (!row) throw new AppException(ErrorCode.NOT_FOUND);
-    const state = (lastAt: Date | null, wrongAt: Date | null): ReviewState => ({
+    const state = (
+      lastAt: Date | null,
+      wrongAt: Date | null,
+      lapses: number,
+    ): ReviewState => ({
       mode,
       itemType: ItemType.SENTENCE,
       itemId: Number(id),
+      lapses,
       lastAt: lastAt?.toISOString() ?? null,
       inRetry: wrongAt !== null,
     });
     if (reviewedToday(row.dictationLastAt, now)) {
-      return state(row.dictationLastAt, row.dictationWrongAt);
+      return state(
+        row.dictationLastAt,
+        row.dictationWrongAt,
+        row.dictationLapses,
+      );
     }
 
-    const wrongAt =
-      result === ReviewResult.WRONG
-        ? now
-        : mode === ReviewMode.RETRY
-          ? null
-          : row.dictationWrongAt;
+    const wrong = result === ReviewResult.WRONG;
+    const wrongAt = wrong
+      ? now
+      : mode === ReviewMode.RETRY
+        ? null
+        : row.dictationWrongAt;
+    const lapses = wrong ? row.dictationLapses + 1 : row.dictationLapses;
     const { count } = await this.prisma.vocabSentence.updateMany({
       where: { id, userId, dictationLastAt: row.dictationLastAt },
-      data: { dictationLastAt: now, dictationWrongAt: wrongAt },
+      data: {
+        dictationLastAt: now,
+        dictationWrongAt: wrongAt,
+        dictationLapses: lapses,
+      },
     });
     if (count === 0) {
       const latest = await this.prisma.vocabSentence.findFirst({
         where: { id, userId },
       });
       if (!latest) throw new AppException(ErrorCode.NOT_FOUND);
-      return state(latest.dictationLastAt, latest.dictationWrongAt);
+      return state(
+        latest.dictationLastAt,
+        latest.dictationWrongAt,
+        latest.dictationLapses,
+      );
     }
-    return state(now, wrongAt);
+    return state(now, wrongAt, lapses);
+  }
+
+  async suspend(
+    userId: string,
+    mode: ReviewMode,
+    id: bigint,
+    now = new Date(),
+  ): Promise<void> {
+    const changed = await this.setSuspendedAt(userId, mode, id, now, {
+      onlyIfActive: true,
+    });
+    if (!changed) await this.ensureExists(userId, mode, id);
+  }
+
+  async resume(userId: string, mode: ReviewMode, id: bigint): Promise<void> {
+    const changed = await this.setSuspendedAt(userId, mode, id, null, {
+      onlyIfActive: false,
+    });
+    if (!changed) throw new AppException(ErrorCode.NOT_FOUND);
+  }
+
+  private async setSuspendedAt(
+    userId: string,
+    mode: ReviewMode,
+    id: bigint,
+    at: Date | null,
+    { onlyIfActive }: { onlyIfActive: boolean },
+  ): Promise<boolean> {
+    if (mode === ReviewMode.WORD) {
+      const { count } = await this.prisma.vocabWord.updateMany({
+        where: { id, userId, ...(onlyIfActive && { suspendedAt: null }) },
+        data: { suspendedAt: at },
+      });
+      return count > 0;
+    }
+    if (mode === ReviewMode.SENTENCE) {
+      const { count } = await this.prisma.vocabSentence.updateMany({
+        where: { id, userId, ...(onlyIfActive && { cardSuspendedAt: null }) },
+        data: { cardSuspendedAt: at },
+      });
+      return count > 0;
+    }
+    const { count } = await this.prisma.vocabSentence.updateMany({
+      where: {
+        id,
+        userId,
+        ...(onlyIfActive && { dictationSuspendedAt: null }),
+      },
+      data: { dictationSuspendedAt: at },
+    });
+    return count > 0;
+  }
+
+  private async ensureExists(
+    userId: string,
+    mode: ReviewMode,
+    id: bigint,
+  ): Promise<void> {
+    const found =
+      mode === ReviewMode.WORD
+        ? await this.prisma.vocabWord.count({ where: { id, userId } })
+        : await this.prisma.vocabSentence.count({ where: { id, userId } });
+    if (!found) throw new AppException(ErrorCode.NOT_FOUND);
   }
 }
 
@@ -397,6 +496,7 @@ function wordState(row: VocabWord): ReviewState {
     mode: ReviewMode.WORD,
     itemType: ItemType.WORD,
     itemId: Number(row.id),
+    lapses: row.lapses,
     level: row.srsLevel,
     nextReviewAt: row.nextReviewAt?.toISOString() ?? null,
   };

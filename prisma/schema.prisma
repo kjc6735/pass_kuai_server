@@ -93,6 +93,8 @@ model VocabWord {
   srsLevel         Int       @default(0) @map("srs_level") @db.SmallInt
   nextReviewAt     DateTime? @map("next_review_at") @db.Timestamptz(3)
   lastReviewedAt   DateTime? @map("last_reviewed_at") @db.Timestamptz(3)
+  lapses           Int       @default(0) @db.SmallInt
+  suspendedAt      DateTime? @map("suspended_at") @db.Timestamptz(3)
   savedAt          DateTime  @default(now()) @map("saved_at") @db.Timestamptz(3)
 
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -106,18 +108,22 @@ model VocabWord {
 }
 
 model VocabSentence {
-  id                 BigInt    @id @default(autoincrement())
-  userId             String    @map("user_id") @db.Uuid
-  sentence           String    @db.VarChar(1000)
-  translation        String    @db.VarChar(4000)
-  pinyin             String    @db.VarChar(8000)
-  sourceAnalysisId   String?   @map("source_analysis_id") @db.Uuid
-  cardSrsLevel       Int       @default(0) @map("card_srs_level") @db.SmallInt
-  cardNextReviewAt   DateTime? @map("card_next_review_at") @db.Timestamptz(3)
-  cardLastReviewedAt DateTime? @map("card_last_reviewed_at") @db.Timestamptz(3)
-  dictationLastAt    DateTime? @map("dictation_last_at") @db.Timestamptz(3)
-  dictationWrongAt   DateTime? @map("dictation_wrong_at") @db.Timestamptz(3)
-  savedAt            DateTime  @default(now()) @map("saved_at") @db.Timestamptz(3)
+  id                   BigInt    @id @default(autoincrement())
+  userId               String    @map("user_id") @db.Uuid
+  sentence             String    @db.VarChar(1000)
+  translation          String    @db.VarChar(4000)
+  pinyin               String    @db.VarChar(8000)
+  sourceAnalysisId     String?   @map("source_analysis_id") @db.Uuid
+  cardSrsLevel         Int       @default(0) @map("card_srs_level") @db.SmallInt
+  cardNextReviewAt     DateTime? @map("card_next_review_at") @db.Timestamptz(3)
+  cardLastReviewedAt   DateTime? @map("card_last_reviewed_at") @db.Timestamptz(3)
+  dictationLastAt      DateTime? @map("dictation_last_at") @db.Timestamptz(3)
+  dictationWrongAt     DateTime? @map("dictation_wrong_at") @db.Timestamptz(3)
+  cardLapses           Int       @default(0) @map("card_lapses") @db.SmallInt
+  dictationLapses      Int       @default(0) @map("dictation_lapses") @db.SmallInt
+  cardSuspendedAt      DateTime? @map("card_suspended_at") @db.Timestamptz(3)
+  dictationSuspendedAt DateTime? @map("dictation_suspended_at") @db.Timestamptz(3)
+  savedAt              DateTime  @default(now()) @map("saved_at") @db.Timestamptz(3)
 
   user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   sourceAnalysis AnalysisResult?     @relation(fields: [sourceAnalysisId], references: [id], onDelete: SetNull)

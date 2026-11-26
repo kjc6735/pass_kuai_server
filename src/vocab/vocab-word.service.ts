@@ -158,6 +158,7 @@ export function toWordItem(row: VocabWord): VocabWordItem {
     ...(row.pos !== null && { pos: row.pos }),
     syllables: row.syllables as unknown as Syllable[],
     sourceSentence: row.sourceSentence,
+    suspended: row.suspendedAt !== null,
     savedAt: row.savedAt.toISOString(),
   };
 }

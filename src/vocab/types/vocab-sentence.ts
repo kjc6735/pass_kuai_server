@@ -15,6 +15,8 @@ export interface VocabSentenceItem {
   translation: string;
   pinyin: string;
   words: SentenceWordItem[];
+  cardSuspended: boolean;
+  dictationSuspended: boolean;
   savedAt: string;
 }
 

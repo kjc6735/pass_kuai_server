@@ -1,4 +1,8 @@
-import { SRS_INTERVAL_DAYS, SRS_MAX_LEVEL } from '../constants/review';
+import {
+  SRS_INTERVAL_DAYS,
+  SRS_LAPSE_DROP,
+  SRS_MAX_LEVEL,
+} from '../constants/review';
 import { kstMidnight } from '../utils/kst-day';
 
 export interface CardState {
@@ -11,7 +15,12 @@ export function nextCardState(
   known: boolean,
   now: Date,
 ): CardState {
-  if (!known) return { level: 0, nextReviewAt: kstMidnight(now, 1) };
+  if (!known) {
+    return {
+      level: Math.max(level - SRS_LAPSE_DROP, 0),
+      nextReviewAt: kstMidnight(now, 1),
+    };
+  }
   const next = Math.min(Math.max(level, 0) + 1, SRS_MAX_LEVEL);
   return {
     level: next,

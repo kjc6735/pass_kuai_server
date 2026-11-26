@@ -110,6 +110,8 @@ export function toSentenceItem(row: SentenceRow): VocabSentenceItem {
       ...(w.pos !== null && { pos: w.pos }),
       syllables: w.syllables as unknown as Syllable[],
     })),
+    cardSuspended: row.cardSuspendedAt !== null,
+    dictationSuspended: row.dictationSuspendedAt !== null,
     savedAt: row.savedAt.toISOString(),
   };
 }

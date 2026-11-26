@@ -24,9 +24,16 @@ describe('nextCardState', () => {
     });
   });
 
-  it('몰랐어요면 단계 0, 내일 0시(KST)', () => {
-    expect(nextCardState(4, false, now)).toEqual({
-      level: 0,
+  it.each([
+    [5, 3],
+    [4, 2],
+    [3, 1],
+    [2, 0],
+    [1, 0],
+    [0, 0],
+  ])('몰랐어요: %i단계 → %i단계, 내일 0시(KST)', (level, next) => {
+    expect(nextCardState(level, false, now)).toEqual({
+      level: next,
       nextReviewAt: kst0('2026-11-25'),
     });
   });

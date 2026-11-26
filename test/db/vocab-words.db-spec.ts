@@ -82,6 +82,7 @@ describe('POST /vocab/words', () => {
         meaning: '뜻',
         syllables: [{ hanzi: '喝', pinyin: 'yīn', tone: 1 }],
         sourceSentence: '我想喝咖啡',
+        suspended: false,
         savedAt: expect.any(String),
       },
     });
