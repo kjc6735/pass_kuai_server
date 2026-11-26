@@ -1,8 +1,8 @@
 # 서버 DB 설계
 
-> 2026-11-21 작성, 2026-11-23 소셜 로그인만 쓰도록 수정(`*_social_login_only` 마이그레이션), 2026-11-24 복습 규칙 추가(3.5)와 구현 상태 반영. 스키마는 `prisma/schema.prisma`. 앱은 온라인 전용(A안, 7장)으로 확정.
+> 2026-11-21 작성, 2026-11-23 소셜 로그인만 쓰도록 수정(`*_social_login_only` 마이그레이션), 2026-11-24 복습 규칙 추가(3.5)와 구현 상태 반영, 2026-11-26 약관 동의(2.4) 추가. 스키마는 `prisma/schema.prisma`. 앱은 온라인 전용(A안, 7장)으로 확정.
 >
-> **구현 상태(2026-11-26):** 계정·소셜 로그인·토큰, 분석 결과, 단어장, 복습은 API에서 씀. **`daily_usage`·`daily_cost`는 테이블만 있고 아직 안 씀**(사용량은 서버 메모리, 4장). 보관 기간 정리 작업은 `daily_usage`만 없음(5장).
+> **구현 상태(2026-11-26):** 계정·소셜 로그인·토큰, 약관 동의, 분석 결과, 단어장, 복습은 API에서 씀. **`daily_usage`·`daily_cost`는 테이블만 있고 아직 안 씀**(사용량은 서버 메모리, 4장). 보관 기간 정리 작업은 `daily_usage`만 없음(5장).
 >
 > **로컬에서 쓰기:** `npm run db:up`(PostgreSQL 컨테이너, 호스트 15432 포트) → `npm run db:migrate`(마이그레이션 적용) → `npm run test:db`(스키마 규칙 테스트, 별도 DB `passkuai_test` 사용). 스키마를 바꿀 때는 `npm run db:migrate -- --name <이름>`. DB 내용 보기: `npm run db:studio`.
 > **Prisma에 없는 제약은 마이그레이션 SQL에 직접 넣음:** SRS 레벨 0~5, 사용량 음수 금지. (아이디·이메일 관련 제약은 소셜 로그인만 쓰기로 하면서 지움)
@@ -31,6 +31,7 @@ DB를 넣기 전(2026-11-21)에는 서버에 DB가 없었습니다. 인증은 �
 ```
 users ─┬─ social_accounts        (카카오·Apple·Google 연결, 로그인 수단)
        ├─ refresh_tokens         (로그인 세션)
+       ├─ user_agreements        (약관 동의 기록, 버전별)
        ├─ analysis_results       (서버가 만든 분석 결과, 7일 보관)
        ├─ vocab_words            (단어장 + 단어 카드 SRS)
        ├─ vocab_sentences ── vocab_sentence_words   (저장 문장 + 문장 카드·받아쓰기 기록)
@@ -93,6 +94,21 @@ daily_cost                (서버 전체 하루 비용 상한)
 - 액세스 토큰은 DB 없이 JWT(30분, `sub`=user_id). 지금의 기기 토큰(365일)을 대체.
 - 계정 삭제 시 CASCADE로 함께 지워짐.
 
+### 2.4 `user_agreements` — 약관 동의 (2026-11-26)
+
+| 컬럼 | 타입 | 설명 |
+|---|---|---|
+| `user_id` | uuid FK → users, CASCADE | |
+| `type` | enum(`terms`, `privacy`, `overseas_transfer`, `age_14`) | 이용약관, 개인정보 수집·이용, 개인정보 국외 이전(Anthropic·OpenAI), 만 14세 이상 |
+| `version` | varchar(20) | 동의한 약관 버전. 예: `2026-11-26` |
+| `agreed_at` | timestamptz | 처음 동의한 시각(다시 보내도 바뀌지 않음) |
+
+- PK(`user_id`, `type`, `version`): 버전마다 한 줄씩 쌓여요(덮어쓰지 않음). 언제 어느 버전에 동의했는지가 증빙이에요.
+- 지금 필수인 버전은 `src/constants/agreement.ts`의 `AGREEMENT_VERSIONS`. 약관을 중요하게 바꾸면 여기 버전을 올리고 배포 → 새 버전에 동의하지 않은 사용자는 403 `AGREEMENT_REQUIRED`로 다시 동의 화면에 가요.
+- 동의 확인은 전역 가드(`AgreementGuard`)가 요청마다 이 테이블을 한 번 세요. 동의 없이 쓸 수 있는 API는 `@AllowWithoutAgreement()`가 붙은 것(`GET`/`DELETE /me`, 로그아웃, `/me/agreements`)과 `@Public()`이에요.
+- 동의 철회는 따로 없어요. 필수 동의를 철회하는 것은 계정 삭제와 같아요.
+- 약관 웹 주소는 환경 변수 `TERMS_URL`, `PRIVACY_URL`(국외 이전은 처리방침 주소를 같이 써요).
+
 ---
 
 ## 3. 분석 결과와 단어장
@@ -127,6 +143,8 @@ daily_cost                (서버 전체 하루 비용 상한)
 | `srs_level` | smallint default 0 | 0~5, 간격 [0,1,3,7,14,30]일 |
 | `next_review_at` | timestamptz NULL | NULL = 바로 복습 대상 |
 | `last_reviewed_at` | timestamptz NULL | |
+| `lapses` | smallint default 0 | 틀린 횟수(하루 최대 1). 0 이상(CHECK) |
+| `suspended_at` | timestamptz NULL | 복습 그만 보기. NULL이 아니면 due·summary에서 빠짐 |
 | `saved_at` | timestamptz | |
 
 - UNIQUE(`user_id`, `word`, `pinyin`, `meaning`): 앱과 같은 규칙(같은 한자 다른 뜻은 별도 단어, 같은 단어 두 번 저장은 막음).
@@ -149,13 +167,15 @@ daily_cost                (서버 전체 하루 비용 상한)
 | `card_last_reviewed_at` | timestamptz NULL | |
 | `dictation_last_at` | timestamptz NULL | 마지막으로 받아쓰기 한 시각 |
 | `dictation_wrong_at` | timestamptz NULL | NULL이 아니면 '틀린 문장 다시 하기'에 들어감. 맞히면 NULL |
+| `card_lapses` / `dictation_lapses` | smallint default 0 | 문장 카드 / 받아쓰기·다시 하기에서 틀린 횟수. 0 이상(CHECK) |
+| `card_suspended_at` / `dictation_suspended_at` | timestamptz NULL | 문장 카드 / 받아쓰기·다시 하기 그만 보기 |
 | `saved_at` | timestamptz | |
 
 - UNIQUE(`user_id`, `sentence`): 같은 원문은 한 번만(앱 v6 규칙과 같음, 처음 저장한 번역 유지).
 - INDEX(`user_id`, `card_next_review_at`), INDEX(`user_id`, `dictation_wrong_at`) (부분 인덱스는 Prisma가 관리하지 못해 일반 인덱스로), INDEX(`source_analysis_id`).
 - 저장 API: `POST /vocab/sentences { analysisId, sentenceIndex }`.
 
-### 3.5 복습 규칙 (`src/review`, 2026-11-24)
+### 3.5 복습 규칙 (`src/review`, 2026-11-24, 2026-11-26 그만 보기·틀린 횟수·2단계 내리기 추가)
 
 | 모드 | 쓰는 칸 | 결과 |
 |---|---|---|
@@ -163,13 +183,14 @@ daily_cost                (서버 전체 하루 비용 상한)
 | `sentence` | `vocab_sentences.card_*` | known / unknown |
 | `dictation`·`retry` | `vocab_sentences.dictation_last_at`·`dictation_wrong_at` | correct / wrong |
 
-- **다음 복습일**(`src/review/srs.ts`): known이면 단계 +1(최대 5), 한국 시간 오늘 0시 + `[0,1,3,7,14,30][단계]`일. unknown이면 단계 0, 내일 0시.
+- **다음 복습일**(`src/review/srs.ts`): known이면 단계 +1(최대 5), 한국 시간 오늘 0시 + `[0,1,3,7,14,30][단계]`일. unknown이면 단계 −2(최소 0, `SRS_LAPSE_DROP`), 내일 0시. 오래 알던 카드를 한 번 틀렸다고 처음부터 하지 않게 하려는 것. 계속 틀리면 알아서 0까지 내려감.
 - **오늘 복습할 카드:** `next_review_at`이 NULL이거나 내일 0시(KST)보다 이른 카드.
 - **하루 100장, 모드별로 따로**(`REVIEW_DAILY_LIMIT`). 오늘 본 수 = 마지막 복습 시각이 오늘 0시(KST) 이후인 행 수. 받아쓰기와 다시 하기는 `dictation_last_at`을 같이 써서 합쳐 100장.
 - **오늘 본 카드는 오늘 다시 나오지 않고, 같은 카드는 모드별로 하루에 한 번만 반영.** 같은 날 다시 오면 바꾸지 않고 지금 상태를 돌려줌. 동시 요청은 "읽은 값이 그대로일 때만 update"로 막음.
 - 받아쓰기·다시 하기에서 wrong이면 `dictation_wrong_at` = 지금(다시 하기에 들어감), retry 모드에서 correct면 NULL. dictation 모드에서 correct면 그대로.
 - 복습 기록 테이블(언제 무엇을 맞혔는지)은 두지 않음. 상태 칸만 바꿈. 통계·연속 학습일이 필요해지면 `review_logs`를 추가.
-- 나중에 정할 것: 그만 보기(`suspended_at`), 틀린 횟수(`lapses`), unknown일 때 0단계 대신 2단계 내리기. 모두 칸 추가나 `srs.ts` 수정만으로 가능.
+- **틀린 횟수:** unknown·wrong이면 +1. 하루 한 번만 반영되니 하루 최대 1. 몇 번부터 "자주 틀림"으로 보여줄지는 앱이 정함.
+- **그만 보기:** `PUT`/`DELETE /me/review/{mode}/{itemId}/suspend`. 그만 본 카드는 due와 summary의 due에서 빠지고 total에는 남음. 단계·다음 복습일은 그대로라 다시 보면 이어서 함. retry는 dictation과 같은 칸(`dictation_suspended_at`)을 씀.
 
 ### 3.4 `vocab_sentence_words` — 문장 속 단어(순서대로)
 
@@ -228,6 +249,7 @@ daily_cost                (서버 전체 하루 비용 상한)
 | 대상 | 언제 지우나 |
 |---|---|
 | 계정 삭제 | 요청 시: refresh token 전부 폐기, 카카오 연결 끊기·Apple revoke, `deletion_scheduled_at` = 30일 뒤. 30일이 지나면 정리 작업(`AccountService.purgeExpiredAccounts`, 1시간마다)이 사용자 행 삭제 → 위 모든 테이블 CASCADE. 유예 기간에도 복구·조회는 안 됨 |
+| 가입 후 약관에 한 번도 동의하지 않은 계정 | 가입하고 7일 뒤. `AgreementService.purgeUnagreedAccounts`(매일 04:00 KST). 동의 기록이 하나라도 있으면(예전 버전 포함) 지우지 않음. 소셜 로그인 연결(카카오·Apple) 해제는 하지 않음 |
 | `analysis_results` | 만든 지 7일 뒤. `AnalysisResultService.purgeExpired`(매일 04:00 KST). 단어장의 `source_analysis_id`는 NULL이 되고 단어·문장은 남음. 정리 전이라도 7일이 지난 결과로는 저장할 수 없음(404) |
 | `refresh_tokens` | `AuthService.purgeExpiredTokens`(매일 04:00 KST). ① 만료된 지 7일 지난 토큰 ② 묶음(family) 전체가 끝난 지 7일 지난 토큰(로그아웃·탈취 감지·계정 삭제). 살아 있는 묶음에서 교체된 토큰은 만료될 때까지 남김. 다시 쓰이면 탈취로 보고 묶음을 끊어야 해서 |
 | `daily_usage` | 90일 뒤, 문의 대응용으로만 남김 (**사용량을 DB로 옮길 때 같이 만듦, 1차 보류**) |

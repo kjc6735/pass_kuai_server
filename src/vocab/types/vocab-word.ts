@@ -8,6 +8,7 @@ export interface VocabWordItem {
   pos?: string;
   syllables: Syllable[];
   sourceSentence: string | null;
+  suspended: boolean;
   savedAt: string;
 }
 

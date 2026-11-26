@@ -20,6 +20,7 @@ export type ReviewCard =
       itemId: number;
       level: number;
       nextReviewAt: string | null;
+      lapses: number;
       card: VocabWordItem;
     }
   | {
@@ -27,6 +28,7 @@ export type ReviewCard =
       itemId: number;
       level?: number;
       nextReviewAt?: string | null;
+      lapses: number;
       card: VocabSentenceItem;
     };
 
@@ -38,6 +40,7 @@ export interface ReviewState {
   mode: ReviewMode;
   itemType: ItemType;
   itemId: number;
+  lapses: number;
   level?: number;
   nextReviewAt?: string | null;
   lastAt?: string | null;

@@ -9,6 +9,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
+import { AllowWithoutAgreement } from '../common/allow-without-agreement.decorator';
 import { Public } from '../common/public.decorator';
 import type { RequestWithUser } from '../common/request-with-user';
 import { AccountService } from './account.service';
@@ -43,6 +44,7 @@ export class AuthController {
     return this.auth.refresh(dto.refreshToken);
   }
 
+  @AllowWithoutAgreement()
   @Post('auth/logout')
   @HttpCode(204)
   async logout(
@@ -52,11 +54,13 @@ export class AuthController {
     await this.auth.logout(req.userId!, dto.refreshToken);
   }
 
+  @AllowWithoutAgreement()
   @Get('me')
   me(@Req() req: RequestWithUser) {
     return this.auth.me(req.userId!);
   }
 
+  @AllowWithoutAgreement()
   @Delete('me')
   @HttpCode(202)
   deleteMe(@Req() req: RequestWithUser, @Body() dto: DeleteAccountRequestDto) {

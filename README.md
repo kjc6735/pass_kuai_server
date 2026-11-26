@@ -28,10 +28,11 @@ docker run -d --name pass-kuai-swagger -p 8081:8080 \
 | 영역 | API | 위치 |
 | --- | --- | --- |
 | 로그인·계정 | `POST /auth/social/{kakao,apple,google}`, `POST /auth/refresh`, `POST /auth/logout`, `GET /me`, `DELETE /me` | `src/auth` |
+| 약관 동의 | `GET`·`POST /me/agreements`. 동의 전에는 다른 API가 403 `AGREEMENT_REQUIRED` | `src/agreement` |
 | 문장 분석 | `POST /analyze/sentence` | `src/analyze` |
 | 발음 연습 | `POST /stt/transcribe` | `src/stt` |
 | 단어장 | `GET·POST /vocab/words`, `DELETE /vocab/words/{id}`, 문장도 같음(`/vocab/sentences`) | `src/vocab` |
-| 복습 | `GET /me/review/summary`, `GET /me/review/due`, `POST /me/review/logs` | `src/review` |
+| 복습 | `GET /me/review/summary`, `GET /me/review/due`, `POST /me/review/logs`, `PUT·DELETE /me/review/{mode}/{itemId}/suspend` | `src/review` |
 | 운영 | `GET /health`, `GET /metrics`(Prometheus) | `src/health`, `src/metrics` |
 
 공통으로 쓰는 것:
@@ -41,7 +42,7 @@ docker run -d --name pass-kuai-swagger -p 8081:8080 \
 
 **아직 없는 것:** `GET /me/usage`(명세에만 있음), 하루 사용량의 DB 저장(지금은 서버 메모리라 재시작하면 초기화). 1차 배포에서는 보류했어요.
 
-**정리 작업:** 매일 한국 시간 새벽 4시에 7일이 지난 분석 결과와 쓸 수 없게 된 refresh token을 지워요. 삭제 예정 계정은 1시간마다 정리해요. 규칙은 [docs/database.md](docs/database.md) 5장에 있어요.
+**정리 작업:** 매일 한국 시간 새벽 4시에 7일이 지난 분석 결과, 쓸 수 없게 된 refresh token, 가입하고 7일 동안 약관에 동의하지 않은 계정을 지워요. 삭제 예정 계정은 1시간마다 정리해요. 규칙은 [docs/database.md](docs/database.md) 5장에 있어요.
 
 ## 로컬에서 실행
 
@@ -84,6 +85,8 @@ npm run lint
 ```
 
 `test:db`는 개발 DB와 따로 `passkuai_test` DB를 만들어 써요(`TEST_DATABASE_URL`로 바꿀 수 있어요). 테스트마다 테이블을 비워요.
+
+테스트 앱(`test/helpers.ts`의 `createTestApp`)은 약관 동의를 된 것으로 보고 돌아요. 동의 흐름을 확인하는 테스트만 `{ enforceAgreements: true }`로 실제 확인을 켜요. 테스트 서버는 `127.0.0.1`의 빈 포트에 한 번 열어서 그 주소로만 요청해요(요청이 다른 프로세스의 같은 포트로 가는 문제를 막으려고).
 
 ## 배포
 

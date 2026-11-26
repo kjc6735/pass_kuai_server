@@ -25,6 +25,9 @@ export const Env = {
   DAILY_REQUEST_LIMIT: 'DAILY_REQUEST_LIMIT',
   DAILY_AUDIO_SECONDS_LIMIT: 'DAILY_AUDIO_SECONDS_LIMIT',
   DAILY_BUDGET_USD: 'DAILY_BUDGET_USD',
+
+  TERMS_URL: 'TERMS_URL',
+  PRIVACY_URL: 'PRIVACY_URL',
 } as const;
 
 export type EnvKey = (typeof Env)[keyof typeof Env];

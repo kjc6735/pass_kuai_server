@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AgreementModule } from '../agreement/agreement.module';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
@@ -15,6 +16,7 @@ import type { EnvConfig } from '../config/env.schema';
 
 @Module({
   imports: [
+    AgreementModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<EnvConfig, true>) => ({
