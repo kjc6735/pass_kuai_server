@@ -1,8 +1,8 @@
 # 서버 DB 설계
 
-> 2026-11-21 작성, 2026-11-23 소셜 로그인만 쓰도록 수정(`*_social_login_only` 마이그레이션), 2026-11-24 복습 규칙 추가(3.5)와 구현 상태 반영. 스키마는 `prisma/schema.prisma`. 앱은 온라인 전용(A안, 7장)으로 확정.
+> 2026-11-21 작성, 2026-11-23 소셜 로그인만 쓰도록 수정(`*_social_login_only` 마이그레이션), 2026-11-24 복습 규칙 추가(3.5)와 구현 상태 반영, 2026-11-26 약관 동의(2.4) 추가. 스키마는 `prisma/schema.prisma`. 앱은 온라인 전용(A안, 7장)으로 확정.
 >
-> **구현 상태(2026-11-26):** 계정·소셜 로그인·토큰, 분석 결과, 단어장, 복습은 API에서 씀. **`daily_usage`·`daily_cost`는 테이블만 있고 아직 안 씀**(사용량은 서버 메모리, 4장). 보관 기간 정리 작업은 `daily_usage`만 없음(5장).
+> **구현 상태(2026-11-26):** 계정·소셜 로그인·토큰, 약관 동의, 분석 결과, 단어장, 복습은 API에서 씀. **`daily_usage`·`daily_cost`는 테이블만 있고 아직 안 씀**(사용량은 서버 메모리, 4장). 보관 기간 정리 작업은 `daily_usage`만 없음(5장).
 >
 > **로컬에서 쓰기:** `npm run db:up`(PostgreSQL 컨테이너, 호스트 15432 포트) → `npm run db:migrate`(마이그레이션 적용) → `npm run test:db`(스키마 규칙 테스트, 별도 DB `passkuai_test` 사용). 스키마를 바꿀 때는 `npm run db:migrate -- --name <이름>`. DB 내용 보기: `npm run db:studio`.
 > **Prisma에 없는 제약은 마이그레이션 SQL에 직접 넣음:** SRS 레벨 0~5, 사용량 음수 금지. (아이디·이메일 관련 제약은 소셜 로그인만 쓰기로 하면서 지움)
@@ -31,6 +31,7 @@ DB를 넣기 전(2026-11-21)에는 서버에 DB가 없었습니다. 인증은 �
 ```
 users ─┬─ social_accounts        (카카오·Apple·Google 연결, 로그인 수단)
        ├─ refresh_tokens         (로그인 세션)
+       ├─ user_agreements        (약관 동의 기록, 버전별)
        ├─ analysis_results       (서버가 만든 분석 결과, 7일 보관)
        ├─ vocab_words            (단어장 + 단어 카드 SRS)
        ├─ vocab_sentences ── vocab_sentence_words   (저장 문장 + 문장 카드·받아쓰기 기록)
@@ -92,6 +93,21 @@ daily_cost                (서버 전체 하루 비용 상한)
 
 - 액세스 토큰은 DB 없이 JWT(30분, `sub`=user_id). 지금의 기기 토큰(365일)을 대체.
 - 계정 삭제 시 CASCADE로 함께 지워짐.
+
+### 2.4 `user_agreements` — 약관 동의 (2026-11-26)
+
+| 컬럼 | 타입 | 설명 |
+|---|---|---|
+| `user_id` | uuid FK → users, CASCADE | |
+| `type` | enum(`terms`, `privacy`, `overseas_transfer`, `age_14`) | 이용약관, 개인정보 수집·이용, 개인정보 국외 이전(Anthropic·OpenAI), 만 14세 이상 |
+| `version` | varchar(20) | 동의한 약관 버전. 예: `2026-11-26` |
+| `agreed_at` | timestamptz | 처음 동의한 시각(다시 보내도 바뀌지 않음) |
+
+- PK(`user_id`, `type`, `version`): 버전마다 한 줄씩 쌓여요(덮어쓰지 않음). 언제 어느 버전에 동의했는지가 증빙이에요.
+- 지금 필수인 버전은 `src/constants/agreement.ts`의 `AGREEMENT_VERSIONS`. 약관을 중요하게 바꾸면 여기 버전을 올리고 배포 → 새 버전에 동의하지 않은 사용자는 403 `AGREEMENT_REQUIRED`로 다시 동의 화면에 가요.
+- 동의 확인은 전역 가드(`AgreementGuard`)가 요청마다 이 테이블을 한 번 세요. 동의 없이 쓸 수 있는 API는 `@AllowWithoutAgreement()`가 붙은 것(`GET`/`DELETE /me`, 로그아웃, `/me/agreements`)과 `@Public()`이에요.
+- 동의 철회는 따로 없어요. 필수 동의를 철회하는 것은 계정 삭제와 같아요.
+- 약관 웹 주소는 환경 변수 `TERMS_URL`, `PRIVACY_URL`(국외 이전은 처리방침 주소를 같이 써요).
 
 ---
 
@@ -233,6 +249,7 @@ daily_cost                (서버 전체 하루 비용 상한)
 | 대상 | 언제 지우나 |
 |---|---|
 | 계정 삭제 | 요청 시: refresh token 전부 폐기, 카카오 연결 끊기·Apple revoke, `deletion_scheduled_at` = 30일 뒤. 30일이 지나면 정리 작업(`AccountService.purgeExpiredAccounts`, 1시간마다)이 사용자 행 삭제 → 위 모든 테이블 CASCADE. 유예 기간에도 복구·조회는 안 됨 |
+| 가입 후 약관에 한 번도 동의하지 않은 계정 | 가입하고 7일 뒤. `AgreementService.purgeUnagreedAccounts`(매일 04:00 KST). 동의 기록이 하나라도 있으면(예전 버전 포함) 지우지 않음. 소셜 로그인 연결(카카오·Apple) 해제는 하지 않음 |
 | `analysis_results` | 만든 지 7일 뒤. `AnalysisResultService.purgeExpired`(매일 04:00 KST). 단어장의 `source_analysis_id`는 NULL이 되고 단어·문장은 남음. 정리 전이라도 7일이 지난 결과로는 저장할 수 없음(404) |
 | `refresh_tokens` | `AuthService.purgeExpiredTokens`(매일 04:00 KST). ① 만료된 지 7일 지난 토큰 ② 묶음(family) 전체가 끝난 지 7일 지난 토큰(로그아웃·탈취 감지·계정 삭제). 살아 있는 묶음에서 교체된 토큰은 만료될 때까지 남김. 다시 쓰이면 탈취로 보고 묶음을 끊어야 해서 |
 | `daily_usage` | 90일 뒤, 문의 대응용으로만 남김 (**사용량을 DB로 옮길 때 같이 만듦, 1차 보류**) |

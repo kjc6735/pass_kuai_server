@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { AppException } from '../common/errors/app.exception';
+import { AgreementService } from '../agreement/agreement.service';
 import { PrismaService } from '../database/prisma.service';
 import { SocialProvider } from '../generated/prisma/client';
 import { sha256Hex } from '../utils/hash';
@@ -36,6 +37,7 @@ export interface UserDto {
   id: string;
   provider: SocialProvider;
   createdAt: Date;
+  agreementsRequired: boolean;
 }
 
 export interface AuthResponse extends TokenPair {
@@ -52,6 +54,7 @@ export class AuthService {
   constructor(
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
+    private readonly agreements: AgreementService,
     @Inject(SOCIAL_VERIFIERS) verifiers: SocialVerifier[],
   ) {
     this.verifiers = new Map(verifiers.map((v) => [v.provider, v]));
@@ -124,6 +127,7 @@ export class AuthService {
       id: user.id,
       provider: account.provider,
       createdAt: user.createdAt,
+      agreementsRequired: !(await this.agreements.hasAll(user.id)),
     };
   }
 

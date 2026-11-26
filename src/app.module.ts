@@ -3,6 +3,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { AgreementGuard } from './agreement/agreement.guard';
+import { AgreementModule } from './agreement/agreement.module';
 import { AnalyzeModule } from './analyze/analyze.module';
 import { AuthGuard } from './auth/auth.guard';
 import { AuthModule } from './auth/auth.module';
@@ -24,6 +26,7 @@ import { Env, NodeEnv } from './constants/env';
   providers: [
     { provide: APP_GUARD, useExisting: AuthGuard },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useExisting: AgreementGuard },
   ],
 })
 export class AppModule {
@@ -59,6 +62,7 @@ export class AppModule {
         MetricsModule,
         UsageModule,
         LlmModule,
+        AgreementModule,
         AuthModule,
         AnalyzeModule,
         SttModule,

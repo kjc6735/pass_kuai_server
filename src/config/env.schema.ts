@@ -37,6 +37,9 @@ export interface EnvConfig {
   DAILY_REQUEST_LIMIT: number;
   DAILY_AUDIO_SECONDS_LIMIT: number;
   DAILY_BUDGET_USD: number;
+
+  TERMS_URL?: string;
+  PRIVACY_URL?: string;
 }
 
 export type AppConfigService = ConfigService<EnvConfig, true>;
@@ -96,6 +99,9 @@ const rules: Record<EnvKey, Joi.Schema> = {
     DEFAULT_LIMITS.dailyAudioSeconds,
   ),
   [Env.DAILY_BUDGET_USD]: num().default(DEFAULT_LIMITS.dailyBudgetUsd),
+
+  [Env.TERMS_URL]: str().uri({ scheme: ['https', 'http'] }),
+  [Env.PRIVACY_URL]: str().uri({ scheme: ['https', 'http'] }),
 };
 
 export const envSchema = Joi.object<EnvConfig>(rules).unknown(true);

@@ -21,6 +21,10 @@ export const ERROR_CODES = {
     status: HttpStatus.UNAUTHORIZED,
     message: '보안을 위해 로그아웃됐어요. 다시 로그인해 주세요.',
   },
+  AGREEMENT_REQUIRED: {
+    status: HttpStatus.FORBIDDEN,
+    message: '서비스를 이용하려면 약관에 동의해 주세요.',
+  },
   ACCOUNT_DELETED: {
     status: HttpStatus.FORBIDDEN,
     message: '삭제를 요청한 계정이에요.',

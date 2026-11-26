@@ -20,6 +20,7 @@ model User {
   vocabWords      VocabWord[]
   vocabSentences  VocabSentence[]
   dailyUsage      DailyUsage[]
+  agreements      UserAgreement[]
 
   @@index([deletionScheduledAt])
   @@map("users")
@@ -190,4 +191,25 @@ model DailyCost {
   spentUsd Decimal  @default(0) @map("spent_usd") @db.Decimal(10, 4)
 
   @@map("daily_cost")
+}
+
+enum AgreementType {
+  terms
+  privacy
+  overseas_transfer
+  age_14
+
+  @@map("agreement_type")
+}
+
+model UserAgreement {
+  userId   String        @map("user_id") @db.Uuid
+  type     AgreementType
+  version  String        @db.VarChar(20)
+  agreedAt DateTime      @default(now()) @map("agreed_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, type, version])
+  @@map("user_agreements")
 }

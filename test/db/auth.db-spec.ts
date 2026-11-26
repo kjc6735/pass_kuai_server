@@ -40,6 +40,7 @@ describe('카카오 로그인', () => {
         id: expect.any(String),
         provider: 'kakao',
         createdAt: expect.any(String),
+        agreementsRequired: false,
       },
     });
     const account = await prisma.socialAccount.findFirstOrThrow();

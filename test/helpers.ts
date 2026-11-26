@@ -2,6 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
+import { AgreementService } from '../src/agreement/agreement.service';
 import { AnalysisResultService } from '../src/analyze/analysis-result.service';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
@@ -35,6 +36,7 @@ const BASE_ENV = {
 
 export async function createTestApp(
   env: Record<string, string> = {},
+  { enforceAgreements = false }: { enforceAgreements?: boolean } = {},
 ): Promise<TestApp> {
   Object.assign(process.env, BASE_ENV, env);
   const create = jest.fn();
@@ -79,7 +81,10 @@ export async function createTestApp(
 
   const app = moduleRef.createNestApplication({ logger: false });
   configureApp(app);
-  await app.init();
+  await app.listen(0, '127.0.0.1');
+  if (!enforceAgreements) {
+    jest.spyOn(app.get(AgreementService), 'hasAll').mockResolvedValue(true);
+  }
 
   const jwt = app.get(JwtService);
   const token = (userId: string = randomUUID()) =>
