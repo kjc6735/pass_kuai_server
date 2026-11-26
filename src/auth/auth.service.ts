@@ -1,4 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { AppException } from '../common/errors/app.exception';
@@ -16,9 +17,15 @@ import {
   ACCESS_TOKEN_TTL,
   ACCESS_TOKEN_TYPE,
   REFRESH_TOKEN_BYTES,
+  REFRESH_TOKEN_RETENTION_MS,
   REFRESH_TOKEN_TTL_MS,
   SOCIAL_VERIFIERS,
 } from '../constants/auth';
+import {
+  RETENTION_CRON,
+  RETENTION_CRON_TIMEZONE,
+  RETENTION_PURGE_BATCH,
+} from '../constants/retention';
 
 export interface TokenPair {
   accessToken: string;
@@ -38,6 +45,8 @@ export interface AuthResponse extends TokenPair {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   private readonly verifiers: Map<SocialProvider, SocialVerifier>;
 
   constructor(
@@ -211,5 +220,31 @@ export class AuthService {
       where: { familyId, revokedAt: null },
       data: { revokedAt: now },
     });
+  }
+
+  @Cron(RETENTION_CRON, { timeZone: RETENTION_CRON_TIMEZONE })
+  async purgeExpiredTokens(now: Date = new Date()): Promise<number> {
+    const cutoff = new Date(now.getTime() - REFRESH_TOKEN_RETENTION_MS);
+    let total = 0;
+    for (;;) {
+      const count = await this.prisma.$executeRaw`
+        DELETE FROM refresh_tokens
+        WHERE id IN (
+          SELECT t.id FROM refresh_tokens t
+          WHERE t.expires_at <= ${cutoff}
+             OR NOT EXISTS (
+               SELECT 1 FROM refresh_tokens alive
+               WHERE alive.family_id = t.family_id
+                 AND alive.expires_at > ${cutoff}
+                 AND (alive.revoked_at IS NULL OR alive.revoked_at > ${cutoff})
+             )
+          LIMIT ${RETENTION_PURGE_BATCH}
+        )`;
+      total += count;
+      if (count < RETENTION_PURGE_BATCH) break;
+    }
+    if (total)
+      this.logger.log(`쓸 수 없게 된 refresh token ${total}개를 지웠습니다.`);
+    return total;
   }
 }

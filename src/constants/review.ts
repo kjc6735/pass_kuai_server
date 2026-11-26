@@ -1,7 +1,6 @@
 export const SRS_MAX_LEVEL = 5;
 export const SRS_INTERVAL_DAYS = [0, 1, 3, 7, 14, 30] as const;
 
-// 모드마다 따로 센다. 받아쓰기와 다시 하기는 같은 칸(dictation_last_at)을 써서 합쳐 센다.
 export const REVIEW_DAILY_LIMIT = 100;
 
 export const ReviewMode = {

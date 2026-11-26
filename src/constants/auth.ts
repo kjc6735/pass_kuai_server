@@ -14,3 +14,5 @@ export const IS_PUBLIC_KEY = 'isPublic';
 
 export const THROTTLE_TTL_MS = 60_000;
 export const THROTTLE_DEFAULT = 'default';
+
+export const REFRESH_TOKEN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
