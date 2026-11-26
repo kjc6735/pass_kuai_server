@@ -31,7 +31,7 @@ docker run -d --name pass-kuai-swagger -p 8081:8080 \
 | 문장 분석 | `POST /analyze/sentence` | `src/analyze` |
 | 발음 연습 | `POST /stt/transcribe` | `src/stt` |
 | 단어장 | `GET·POST /vocab/words`, `DELETE /vocab/words/{id}`, 문장도 같음(`/vocab/sentences`) | `src/vocab` |
-| 복습 | `GET /me/review/summary`, `GET /me/review/due`, `POST /me/review/logs` | `src/review` |
+| 복습 | `GET /me/review/summary`, `GET /me/review/due`, `POST /me/review/logs`, `PUT·DELETE /me/review/{mode}/{itemId}/suspend` | `src/review` |
 | 운영 | `GET /health`, `GET /metrics`(Prometheus) | `src/health`, `src/metrics` |
 
 공통으로 쓰는 것:

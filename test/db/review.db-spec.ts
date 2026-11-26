@@ -167,13 +167,14 @@ describe('단어 카드 (mode=word)', () => {
       mode: 'word',
       itemType: 'word',
       itemId: a,
+      lapses: 0,
       level: 1,
       nextReviewAt: tomorrow(),
     });
     expect(ids((await due(u, 'mode=word').expect(200)).body)).toEqual([b]);
   });
 
-  it('몰랐어요: 단계 0, 내일 0시', async () => {
+  it('몰랐어요: 2단계 내리고 내일 0시, 틀린 횟수 +1', async () => {
     const u = await login('k-1');
     const [a] = await saveWords(u, ['你']);
     await prisma.vocabWord.update({
@@ -187,7 +188,11 @@ describe('단어 카드 (mode=word)', () => {
       itemId: a,
       result: 'unknown',
     }).expect(200);
-    expect(res.body).toMatchObject({ level: 0, nextReviewAt: tomorrow() });
+    expect(res.body).toMatchObject({
+      level: 2,
+      lapses: 1,
+      nextReviewAt: tomorrow(),
+    });
     expect((await due(u, 'mode=word').expect(200)).body.items).toEqual([]);
   });
 
@@ -307,6 +312,7 @@ describe('문장 카드 (mode=sentence)', () => {
       mode: 'sentence',
       itemType: 'sentence',
       itemId: s,
+      lapses: 0,
       level: 1,
       nextReviewAt: tomorrow(),
     });
@@ -349,6 +355,7 @@ describe('받아쓰기·다시 하기 (mode=dictation, retry)', () => {
       mode: 'dictation',
       itemType: 'sentence',
       itemId: s,
+      lapses: 1,
       lastAt: expect.any(String),
       inRetry: true,
     });
@@ -434,5 +441,177 @@ describe('잘못된 요청', () => {
 
   it('로그인 안 하면 401', async () => {
     await http().get('/me/review/summary').expect(401);
+  });
+});
+
+describe('틀린 횟수 (lapses)', () => {
+  it('몰랐어요마다 +1, 같은 날은 한 번만, 알았어요는 그대로', async () => {
+    const u = await login('k-1');
+    const [a] = await saveWords(u, ['你']);
+    const unknown = {
+      mode: 'word',
+      itemType: 'word',
+      itemId: a,
+      result: 'unknown',
+    };
+
+    expect((await log(u, unknown).expect(200)).body.lapses).toBe(1);
+    expect((await log(u, unknown).expect(200)).body.lapses).toBe(1);
+
+    await prisma.vocabWord.update({
+      where: { id: BigInt(a) },
+      data: { lastReviewedAt: yesterday(), nextReviewAt: yesterday() },
+    });
+    expect((await log(u, unknown).expect(200)).body.lapses).toBe(2);
+
+    await prisma.vocabWord.update({
+      where: { id: BigInt(a) },
+      data: { lastReviewedAt: yesterday(), nextReviewAt: yesterday() },
+    });
+    const card = await due(u, 'mode=word').expect(200);
+    expect(card.body.items[0]).toMatchObject({ itemId: a, lapses: 2 });
+    const known = await log(u, { ...unknown, result: 'known' }).expect(200);
+    expect(known.body.lapses).toBe(2);
+  });
+
+  it('문장 카드와 받아쓰기는 따로 센다', async () => {
+    const u = await login('k-1');
+    const s = await saveSentence(u, '你好');
+    await log(u, {
+      mode: 'sentence',
+      itemType: 'sentence',
+      itemId: s,
+      result: 'unknown',
+    }).expect(200);
+    await log(u, {
+      mode: 'dictation',
+      itemType: 'sentence',
+      itemId: s,
+      result: 'wrong',
+    }).expect(200);
+    await prisma.vocabSentence.update({
+      where: { id: BigInt(s) },
+      data: { dictationLastAt: yesterday() },
+    });
+    const retry = await log(u, {
+      mode: 'retry',
+      itemType: 'sentence',
+      itemId: s,
+      result: 'wrong',
+    }).expect(200);
+
+    expect(retry.body.lapses).toBe(2);
+    expect(
+      await prisma.vocabSentence.findUniqueOrThrow({
+        where: { id: BigInt(s) },
+      }),
+    ).toMatchObject({ cardLapses: 1, dictationLapses: 2 });
+    const card = await due(u, 'mode=retry').expect(200);
+    expect(card.body.items).toEqual([]);
+  });
+});
+
+describe('그만 보기', () => {
+  const suspend = (u: User, mode: string, id: number | string) =>
+    http().put(`/me/review/${mode}/${id}/suspend`).set('Authorization', u.auth);
+  const resume = (u: User, mode: string, id: number | string) =>
+    http()
+      .delete(`/me/review/${mode}/${id}/suspend`)
+      .set('Authorization', u.auth);
+
+  it('그만 본 단어는 복습에서 빠지고, 다시 보면 전 단계부터 이어진다', async () => {
+    const u = await login('k-1');
+    const [a, b] = await saveWords(u, ['你', '好']);
+    await prisma.vocabWord.update({
+      where: { id: BigInt(a) },
+      data: { srsLevel: 3, nextReviewAt: yesterday() },
+    });
+
+    await suspend(u, 'word', a).expect(204);
+
+    expect(ids((await due(u, 'mode=word').expect(200)).body)).toEqual([b]);
+    expect((await summary(u).expect(200)).body.word).toEqual({
+      due: 1,
+      total: 2,
+    });
+    const list = await http()
+      .get('/vocab/words')
+      .set('Authorization', u.auth)
+      .expect(200);
+    expect(
+      (list.body as { items: { id: number; suspended: boolean }[] }).items
+        .map((w) => [w.id, w.suspended])
+        .sort(),
+    ).toEqual([
+      [a, true],
+      [b, false],
+    ]);
+
+    await resume(u, 'word', a).expect(204);
+    const back = await due(u, 'mode=word').expect(200);
+    expect(ids(back.body)).toEqual([b, a]);
+    expect(back.body.items[1]).toMatchObject({ itemId: a, level: 3 });
+  });
+
+  it('이미 그만 본 카드에 다시 보내도 처음 시각을 유지한다', async () => {
+    const u = await login('k-1');
+    const [a] = await saveWords(u, ['你']);
+    await suspend(u, 'word', a).expect(204);
+    const first = await prisma.vocabWord.findUniqueOrThrow({
+      where: { id: BigInt(a) },
+    });
+
+    await suspend(u, 'word', a).expect(204);
+
+    const again = await prisma.vocabWord.findUniqueOrThrow({
+      where: { id: BigInt(a) },
+    });
+    expect(again.suspendedAt).toEqual(first.suspendedAt);
+  });
+
+  it('문장 카드와 받아쓰기는 따로 그만 본다. 받아쓰기를 그만 보면 다시 하기에서도 빠진다', async () => {
+    const u = await login('k-1');
+    const s = await saveSentence(u, '你好');
+    await prisma.vocabSentence.update({
+      where: { id: BigInt(s) },
+      data: { dictationWrongAt: yesterday(), dictationLastAt: yesterday() },
+    });
+
+    await suspend(u, 'sentence', s).expect(204);
+    expect((await due(u, 'mode=sentence').expect(200)).body.items).toEqual([]);
+    expect(ids((await due(u, 'mode=dictation').expect(200)).body)).toEqual([s]);
+
+    await suspend(u, 'retry', s).expect(204);
+    expect((await due(u, 'mode=dictation').expect(200)).body.items).toEqual([]);
+    expect((await due(u, 'mode=retry').expect(200)).body.items).toEqual([]);
+    expect((await summary(u).expect(200)).body).toMatchObject({
+      sentence: { due: 0, total: 1 },
+      dictation: { due: 0, total: 1 },
+      retry: { due: 0, total: 1 },
+    });
+    const list = await http()
+      .get('/vocab/sentences')
+      .set('Authorization', u.auth)
+      .expect(200);
+    expect(list.body.items[0]).toMatchObject({
+      cardSuspended: true,
+      dictationSuspended: true,
+    });
+  });
+
+  it('남의 카드, 없는 카드, 잘못된 id는 404, 잘못된 모드는 400', async () => {
+    const me = await login('k-1');
+    const other = await login('k-2');
+    const [theirs] = await saveWords(other, ['你']);
+
+    await suspend(me, 'word', theirs).expect(404);
+    await resume(me, 'word', theirs).expect(404);
+    await suspend(me, 'word', 999).expect(404);
+    await suspend(me, 'word', 'abc').expect(404);
+    await suspend(me, 'grammar', theirs).expect(400);
+    const row = await prisma.vocabWord.findUniqueOrThrow({
+      where: { id: BigInt(theirs) },
+    });
+    expect(row.suspendedAt).toBeNull();
   });
 });
