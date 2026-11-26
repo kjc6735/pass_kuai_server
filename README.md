@@ -92,13 +92,34 @@ npm run lint
 
 `deploy/`에 Nginx → 서버 → PostgreSQL 구성이 있어요. 서버는 내부망에만 열리고 밖에서는 Nginx(80·443)로만 들어와요.
 
+| 주소 | 내용 |
+| --- | --- |
+| `https://passkuai.com/api/...` | API. Nginx가 `/api`를 떼고 서버로 넘겨요(`/api/health` → 서버의 `/health`) |
+| `https://passkuai.com/privacy` | 개인정보처리방침 (`deploy/site/privacy.html`) |
+| `https://passkuai.com/` | 소개 페이지 (`deploy/site/index.html`) |
+
+`www.passkuai.com`과 `http://`는 `https://passkuai.com`으로 넘겨요. `/api/metrics`는 밖에서 막아요.
+
+### 처음 한 번
+
+DNS에서 `passkuai.com`, `www.passkuai.com`의 A 레코드를 서버 IP로 연결하고, 서버의 80·443 포트를 열어 둬요.
+
 ```bash
 cd deploy
-cp .env.example .env     # 운영 값 채우기
-# 인증서: deploy/certs/fullchain.pem, privkey.pem (CERT_DIR로 경로 변경 가능, git에 올리지 않음)
+cp .env.example .env          # 운영 값 채우기
+./init-cert.sh <이메일>         # Let's Encrypt 인증서 받기 (80 포트를 잠깐 씀)
 docker compose up -d --build
+curl https://passkuai.com/api/health
+```
+
+### 업데이트
+
+```bash
+git pull && cd deploy && docker compose up -d --build
 ```
 
 - 서버보다 먼저 `migrate` 컨테이너가 `prisma migrate deploy`를 한 번 실행해요. 실행 이미지에는 Prisma CLI가 없어서 따로 둔 거예요.
 - 서버는 `/health`가 응답해야 준비된 것으로 보고, 그다음 Nginx가 떠요.
 - Nginx 뒤에 있어서 `TRUST_PROXY=1`로 실제 접속 IP를 써요.
+- 인증서는 `certbot` 컨테이너가 12시간마다 갱신을 확인하고, Nginx는 6시간마다 다시 읽어요. 인증서는 `letsencrypt` 볼륨에 있어요.
+- 컨테이너 로그는 컨테이너마다 20MB × 5개까지만 남겨요.
