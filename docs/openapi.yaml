@@ -11,6 +11,9 @@ info:
     - 앱은 온라인 전용. 단어장·복습의 원본은 서버. 단어·문장은 analysisId + 위치로만 저장(내용은 서버가 분석 결과에서 복사).
     - 복습 단계·다음 복습일은 서버가 계산. 앱은 결과만 보냄.
 
+    아직 서버에 없는 것 (2026-11-24)
+    - GET /me/usage: 명세만 있음. 하루 사용량을 DB로 옮기면서 만들 예정
+
     이 문서에 넣지 않은 것
     - POST /auth/device: 계정 토큰으로 바꾸면서 지움
     - POST /analyze/word: 앱에서 부르는 곳이 없음
@@ -537,8 +540,8 @@ components:
       type: object
       required: [accessToken, refreshToken]
       properties:
-        accessToken: { type: string, description: JWT, 30분 }
-        refreshToken: { type: string, description: 60일, 쓸 때마다 새로 발급. 앱 안전 저장소에 보관 }
+        accessToken: { type: string, description: 'JWT, 30분' }
+        refreshToken: { type: string, description: '60일, 쓸 때마다 새로 발급. 앱 안전 저장소에 보관' }
     UserDto:
       type: object
       required: [id, provider, createdAt]

@@ -1,27 +1,28 @@
-# 서버 DB 설계 (초안)
+# 서버 DB 설계
 
-> 2026-11-21 작성, 2026-11-23 소셜 로그인만 쓰도록 수정(`*_social_login_only` 마이그레이션). 스키마 구현됨(`prisma/schema.prisma`). 아직 API에서 쓰지 않음. 앱은 온라인 전용(A안, 7장)으로 확정.
+> 2026-11-21 작성, 2026-11-23 소셜 로그인만 쓰도록 수정(`*_social_login_only` 마이그레이션), 2026-11-24 복습 규칙 추가(3.5)와 구현 상태 반영. 스키마는 `prisma/schema.prisma`. 앱은 온라인 전용(A안, 7장)으로 확정.
+>
+> **구현 상태(2026-11-24):** 계정·소셜 로그인·토큰, 분석 결과, 단어장, 복습은 API에서 씀. **`daily_usage`·`daily_cost`는 테이블만 있고 아직 안 씀**(사용량은 서버 메모리, 4장). 보관 기간 정리 작업은 계정 삭제만 있음(5장).
 >
 > **로컬에서 쓰기:** `npm run db:up`(PostgreSQL 컨테이너, 호스트 15432 포트) → `npm run db:migrate`(마이그레이션 적용) → `npm run test:db`(스키마 규칙 테스트, 별도 DB `passkuai_test` 사용). 스키마를 바꿀 때는 `npm run db:migrate -- --name <이름>`. DB 내용 보기: `npm run db:studio`.
 > **Prisma에 없는 제약은 마이그레이션 SQL에 직접 넣음:** SRS 레벨 0~5, 사용량 음수 금지. (아이디·이메일 관련 제약은 소셜 로그인만 쓰기로 하면서 지움)
-> **배포 때 정할 것:** 운영 DB에 마이그레이션을 적용하는 방법(실행 이미지에는 Prisma CLI가 없음 → 배포 단계에서 별도 실행).
+> **운영 DB 마이그레이션:** 실행 이미지에는 Prisma CLI가 없어서 `deploy/docker-compose.yml`의 `migrate` 컨테이너(Dockerfile `migrate` 단계)가 서버보다 먼저 `prisma migrate deploy`를 한 번 실행함.
 > 배경: 1차 출시부터 로그인 필수(**카카오·Apple·Google만**, 아이디·비밀번호와 이메일 인증 없음), 단어장·복습 기록은 서버(계정)에 저장. 앱을 실제 사용자에게 배포한 적이 없어서 기기 데이터 이전은 없음.
 
 관련 문서: 앱 로컬 DB [pass_kuai_app/docs/architecture/table.md](../../pass_kuai_app/docs/architecture/table.md), 계획 [PLAN.md](../../pass_kuai_app/docs/PLAN.md)
 
 ---
 
-## 0. 지금 상태와 바꾸는 이유
+## 0. 배경과 원칙
 
-- 서버에는 DB가 없습니다. 인증은 기기 토큰(JWT에 deviceId), 사용량은 서버 메모리(`UsageService`)에서 셉니다. 그래서 서버를 재시작하면 사용량이 초기화되고, 서버가 여러 대면 따로 셉니다.
-- 단어장·문장·복습 기록은 앱 기기(drift)에만 있습니다. 앱이 서버 분석 결과를 받아 직접 저장합니다.
+DB를 넣기 전(2026-11-21)에는 서버에 DB가 없었습니다. 인증은 기기 토큰(JWT에 deviceId)이었고, 단어장·문장·복습 기록은 앱 기기(drift)에만 있었습니다. 지금은 소셜 로그인 계정 기준으로 바뀌었고 단어장·복습 기록은 서버에 있습니다.
 
-**바꾸는 원칙**
+**원칙**
 1. **단어장 내용은 서버가 만든 분석 결과에서만 만든다.** 앱은 "몇 번째 분석의 몇 번째 문장/단어를 저장"이라고 위치만 보내고, 내용(한자·병음·뜻)은 보내지 않는다. 앱이 보낸 임의 단어가 단어장에 들어가 나중에 LLM 입력으로 쓰이는 일을 막는다.
 2. **모든 사용자 데이터는 `user_id`를 갖고, 계정을 지우면 함께 지워진다**(`ON DELETE CASCADE`). 사용자가 입력한 문장에는 개인정보가 섞일 수 있어서 사용자끼리 공유하는 테이블을 두지 않는다.
-3. **사용량은 DB에서 센다.** 서버 재시작·여러 대에도 정확하게.
+3. **사용량은 DB에서 센다.** 서버 재시작·여러 대에도 정확하게. (아직 안 함, 4장)
 
-**기술 선택(제안):** PostgreSQL + Prisma(스키마 파일과 마이그레이션 이력이 한곳에 남음). 로컬은 `lab/infra/docker-compose.yml`에 postgres 컨테이너를 추가.
+**기술:** PostgreSQL 17 + Prisma 7(스키마 파일과 마이그레이션 이력이 한곳에 남음). 로컬 DB는 `lab/infra/docker-compose.yml`의 postgres 컨테이너.
 
 ---
 
@@ -154,6 +155,22 @@ daily_cost                (서버 전체 하루 비용 상한)
 - INDEX(`user_id`, `card_next_review_at`), INDEX(`user_id`, `dictation_wrong_at`) (부분 인덱스는 Prisma가 관리하지 못해 일반 인덱스로), INDEX(`source_analysis_id`).
 - 저장 API: `POST /vocab/sentences { analysisId, sentenceIndex }`.
 
+### 3.5 복습 규칙 (`src/review`, 2026-11-24)
+
+| 모드 | 쓰는 칸 | 결과 |
+|---|---|---|
+| `word` | `vocab_words.srs_level`·`next_review_at`·`last_reviewed_at` | known / unknown |
+| `sentence` | `vocab_sentences.card_*` | known / unknown |
+| `dictation`·`retry` | `vocab_sentences.dictation_last_at`·`dictation_wrong_at` | correct / wrong |
+
+- **다음 복습일**(`src/review/srs.ts`): known이면 단계 +1(최대 5), 한국 시간 오늘 0시 + `[0,1,3,7,14,30][단계]`일. unknown이면 단계 0, 내일 0시.
+- **오늘 복습할 카드:** `next_review_at`이 NULL이거나 내일 0시(KST)보다 이른 카드.
+- **하루 100장, 모드별로 따로**(`REVIEW_DAILY_LIMIT`). 오늘 본 수 = 마지막 복습 시각이 오늘 0시(KST) 이후인 행 수. 받아쓰기와 다시 하기는 `dictation_last_at`을 같이 써서 합쳐 100장.
+- **오늘 본 카드는 오늘 다시 나오지 않고, 같은 카드는 모드별로 하루에 한 번만 반영.** 같은 날 다시 오면 바꾸지 않고 지금 상태를 돌려줌. 동시 요청은 "읽은 값이 그대로일 때만 update"로 막음.
+- 받아쓰기·다시 하기에서 wrong이면 `dictation_wrong_at` = 지금(다시 하기에 들어감), retry 모드에서 correct면 NULL. dictation 모드에서 correct면 그대로.
+- 복습 기록 테이블(언제 무엇을 맞혔는지)은 두지 않음. 상태 칸만 바꿈. 통계·연속 학습일이 필요해지면 `review_logs`를 추가.
+- 나중에 정할 것: 그만 보기(`suspended_at`), 틀린 횟수(`lapses`), unknown일 때 0단계 대신 2단계 내리기. 모두 칸 추가나 `srs.ts` 수정만으로 가능.
+
 ### 3.4 `vocab_sentence_words` — 문장 속 단어(순서대로)
 
 | 컬럼 | 타입 | 설명 |
@@ -168,6 +185,8 @@ daily_cost                (서버 전체 하루 비용 상한)
 ---
 
 ## 4. 사용량
+
+> **아직 안 씀.** 지금 하루 한도와 비용 상한은 서버 메모리(`UsageService`)에서 셈. 그래서 서버를 재시작(배포)하면 초기화되고, 서버가 여러 대면 따로 셈. 아래 테이블로 옮기는 게 다음 작업.
 
 ### 4.1 `daily_usage` — 계정별 하루 사용량
 
@@ -189,7 +208,8 @@ daily_cost                (서버 전체 하루 비용 상한)
 | `day` | date PK | |
 | `spent_usd` | numeric(10,4) default 0 | |
 
-- 지금 메모리의 `spentUsd`를 옮긴 것. `DAILY_BUDGET_USD` 확인에 씀.
+- `UsageService`의 메모리 `spentUsd`를 옮길 자리. `DAILY_BUDGET_USD` 확인에 씀.
+- 서버 전체가 한 행을 같이 바꿔서 동시 요청이 많으면 행 잠금을 기다림. 한 번에 짧아서 초당 수백 번까지는 괜찮다고 봄. 문제가 되면 서버 메모리에 모았다가 몇 초마다 더하는 방식으로 바꿈(비용 상한은 몇 초 늦어도 되는 안전장치).
 
 ---
 
@@ -208,9 +228,9 @@ daily_cost                (서버 전체 하루 비용 상한)
 | 대상 | 언제 지우나 |
 |---|---|
 | 계정 삭제 | 요청 시: refresh token 전부 폐기, 카카오 연결 끊기·Apple revoke, `deletion_scheduled_at` = 30일 뒤. 30일이 지나면 정리 작업(`AccountService.purgeExpiredAccounts`, 1시간마다)이 사용자 행 삭제 → 위 모든 테이블 CASCADE. 유예 기간에도 복구·조회는 안 됨 |
-| `analysis_results` | 7일 뒤 |
-| `refresh_tokens` | 만료·폐기 후 7일 뒤 |
-| `daily_usage` | 90일 뒤(문의 대응용으로만 남김) |
+| `analysis_results` | 7일 뒤 (**정리 작업 아직 없음**) |
+| `refresh_tokens` | 만료·폐기 후 7일 뒤 (**정리 작업 아직 없음**) |
+| `daily_usage` | 90일 뒤, 문의 대응용으로만 남김 (**정리 작업 아직 없음**) |
 
 계정 삭제는 **30일 유예 후 삭제**로 정함(2026-11-23). 같은 소셜 계정으로는 30일이 지나 정리된 뒤에 다시 가입할 수 있어요. 시안 24-2의 "7일 안에" 문구는 "30일 안에"로 바꿔야 함.
 
@@ -227,5 +247,7 @@ daily_cost                (서버 전체 하루 비용 상한)
 - 서버가 단어장의 유일한 원본. 1차는 온라인 전용.
 - **앱 drift DB 제거:** `lib/database/` 테이블 5개(`words`, `sentences`, `sentence_words`, `saved_words`, `saved_sentences`)와 마이그레이션(v5~v7)·관련 테스트를 지운다. 화면은 API로 받아 Riverpod이 메모리에 들고 있는다.
 - 앱이 기기에 저장하는 것은 로그인 토큰(secure storage)뿐.
-- 복습 결과(알았어요/몰랐어요, 받아쓰기 맞음/틀림)는 바로 서버에 보낸다. SRS 계산(`lib/service/srs.dart`)은 서버로 옮기고 앱은 결과만 받는다(앱이 레벨·날짜를 보내면 조작 가능).
+- 복습 결과(알았어요/몰랐어요, 받아쓰기 맞음/틀림)는 카드마다 바로 서버에 보낸다(`POST /me/review/logs`). SRS 계산(`lib/service/srs.dart`)은 서버로 옮겼다(`src/review/srs.ts`, 3.5). 앱은 단계·날짜를 보내지 않는다.
+- 회차 끝에 틀린 카드를 한 번 더 보여주는 것은 앱에서만 하고, 그 결과는 서버에 보내지 않는다(보내도 같은 날이라 서버가 무시함).
+- 복습 기록을 기기에 두는 방안을 2026-11-24에 다시 검토했지만 서버에 두기로 유지했다. 기기를 바꾸거나 앱을 지우면 복습 단계가 사라지고, 서버 단어장과 동기화가 필요해지기 때문.
 - 나중에 오프라인 복습(B안)을 넣을 때는 앱에 서버와 같은 모양의 캐시 테이블(서버 id 기준) + 보내지 못한 복습 결과 큐를 추가한다. 서버 테이블은 바꾸지 않아도 되게 설계했다.

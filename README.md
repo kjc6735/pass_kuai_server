@@ -1,98 +1,99 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# pass_kuai 서버
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+중국어 학습 앱 pass_kuai의 API 서버예요. 문장을 AI로 분석하고, 단어장과 복습 기록을 계정에 저장해요.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+- NestJS 11 · TypeScript · PostgreSQL(Prisma 7)
+- AI: 문장 분석은 Claude(Anthropic), 발음 연습 음성 인식은 OpenAI
+- 앱은 온라인 전용이에요. 단어장과 복습 기록의 원본은 서버에 있어요.
 
-## Description
+## 문서
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+| 문서 | 내용 |
+| --- | --- |
+| [docs/openapi.yaml](docs/openapi.yaml) | API 명세. 앱과 맞추는 기준 |
+| [docs/database.md](docs/database.md) | DB 설계와 보관·삭제 규칙 |
+| [lab/README.md](lab/README.md) | 부하 테스트 환경 (k6, 가짜 AI 서버, Grafana) |
 
-## Project setup
+명세를 Swagger 화면으로 보려면:
 
 ```bash
-$ npm install
+docker run -d --name pass-kuai-swagger -p 8081:8080 \
+  -e SWAGGER_JSON=/spec/openapi.yaml -v "$PWD/docs:/spec:ro" \
+  swaggerapi/swagger-ui:v5.17.14
+# http://localhost:8081 (docs/를 그대로 읽어서 고치면 새로고침만 하면 돼요)
 ```
 
-## Compile and run the project
+## 기능
+
+| 영역 | API | 위치 |
+| --- | --- | --- |
+| 로그인·계정 | `POST /auth/social/{kakao,apple,google}`, `POST /auth/refresh`, `POST /auth/logout`, `GET /me`, `DELETE /me` | `src/auth` |
+| 문장 분석 | `POST /analyze/sentence` | `src/analyze` |
+| 발음 연습 | `POST /stt/transcribe` | `src/stt` |
+| 단어장 | `GET·POST /vocab/words`, `DELETE /vocab/words/{id}`, 문장도 같음(`/vocab/sentences`) | `src/vocab` |
+| 복습 | `GET /me/review/summary`, `GET /me/review/due`, `POST /me/review/logs` | `src/review` |
+| 운영 | `GET /health`, `GET /metrics`(Prometheus) | `src/health`, `src/metrics` |
+
+공통으로 쓰는 것:
+- `src/llm`: AI 호출(비용·토큰 기록, 잘린 응답 처리, 프롬프트 캐시)
+- `src/usage`: 하루 분석 횟수·발음 연습 시간 한도, 서버 전체 하루 비용 상한
+- `src/constants`: 상수와 에러 코드(`error-code.ts`), `src/utils`: 작은 함수들
+
+**아직 없는 것:** `GET /me/usage`(명세에만 있음), 하루 사용량의 DB 저장(지금은 서버 메모리라 재시작하면 초기화), 분석 결과·토큰 보관 기간 정리 작업. 자세한 규칙은 [docs/database.md](docs/database.md) 5장에 있어요.
+
+## 로컬에서 실행
+
+Node.js 22와 Docker가 필요해요.
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm install
+cp .env.example .env     # 값 채우기 (아래 참고)
+npm run db:up            # PostgreSQL 컨테이너 (localhost:15432)
+npm run db:migrate       # 마이그레이션 적용
+npm run start:dev        # http://localhost:3000
 ```
 
-## Run tests
+`.env`에서 꼭 채울 것:
+- `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`: 없으면 분석·발음 연습만 실패해요. 돈을 쓰지 않으려면 가짜 AI 서버를 써요(`npm run lab:mock` 후 `ANTHROPIC_BASE_URL=http://localhost:8080`).
+- 소셜 로그인(`KAKAO_APP_ID`, `GOOGLE_CLIENT_IDS`, `APPLE_*`): 쓰는 회사 것만 채우면 돼요.
+- `JWT_SECRET`: 개발에서는 비워도 돼요.
+
+운영(`NODE_ENV=production`)에서는 `DATABASE_URL`, `JWT_SECRET`(32자 이상), `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`가 없으면 서버가 뜨지 않아요.
+
+각 변수 설명은 [.env.example](.env.example)에 있어요. 서버가 뜰 때 Joi로 검사해요(`src/config/env.schema.ts`).
+
+### DB
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run db:migrate -- --name <이름>   # 스키마(prisma/schema.prisma)를 바꾼 뒤 마이그레이션 만들기
+npm run db:studio                     # DB 내용 보기
+npm run db:reset                      # 로컬 DB를 지우고 처음부터 다시
 ```
 
-## Deployment
+Prisma로 표현할 수 없는 제약(복습 단계 0~5, 사용량 음수 금지 등)은 마이그레이션 SQL에 직접 넣어요.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+## 테스트
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm test             # 단위 테스트 (src/**/*.spec.ts)
+npm run test:e2e     # API 테스트. AI·소셜 로그인은 가짜로 바꾸고 DB 없이 돌아요 (test/*.e2e-spec.ts)
+npm run test:db      # 실제 DB로 도는 테스트 (test/db/*.db-spec.ts). npm run db:up 필요
+npm run lint
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+`test:db`는 개발 DB와 따로 `passkuai_test` DB를 만들어 써요(`TEST_DATABASE_URL`로 바꿀 수 있어요). 테스트마다 테이블을 비워요.
 
-## Resources
+## 배포
 
-Check out a few resources that may come in handy when working with NestJS:
+`deploy/`에 Nginx → 서버 → PostgreSQL 구성이 있어요. 서버는 내부망에만 열리고 밖에서는 Nginx(80·443)로만 들어와요.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```bash
+cd deploy
+cp .env.example .env     # 운영 값 채우기
+# 인증서: deploy/certs/fullchain.pem, privkey.pem (CERT_DIR로 경로 변경 가능, git에 올리지 않음)
+docker compose up -d --build
+```
 
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- 서버보다 먼저 `migrate` 컨테이너가 `prisma migrate deploy`를 한 번 실행해요. 실행 이미지에는 Prisma CLI가 없어서 따로 둔 거예요.
+- 서버는 `/health`가 응답해야 준비된 것으로 보고, 그다음 Nginx가 떠요.
+- Nginx 뒤에 있어서 `TRUST_PROXY=1`로 실제 접속 IP를 써요.
