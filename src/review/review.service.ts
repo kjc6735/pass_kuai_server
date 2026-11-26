@@ -43,7 +43,6 @@ const dayOf = (now: Date): Day => ({
   tomorrow: kstMidnight(now, 1),
 });
 
-/** 오늘 남은 양: 하루 한도에서 오늘 본 수를 빼고, 실제로 할 수 있는 수를 넘지 않게 */
 const remaining = (available: number, doneToday: number) =>
   Math.max(0, Math.min(available, REVIEW_DAILY_LIMIT - doneToday));
 
@@ -115,7 +114,6 @@ export class ReviewService {
     }
   }
 
-  // 오늘 본 카드는 다음 복습이 내일 0시 이후라서 "오늘 복습할 카드" 조건에서 저절로 빠진다.
   private async dueWords(
     userId: string,
     limit: number,
@@ -184,7 +182,6 @@ export class ReviewService {
     };
   }
 
-  // 받아쓰기와 다시 하기는 dictation_last_at 하나로 오늘 본 것을 세고 뺀다.
   private async dueDictation(
     userId: string,
     mode: ReviewMode,
@@ -244,10 +241,6 @@ export class ReviewService {
     }
   }
 
-  /**
-   * 같은 카드는 하루에 한 번만 반영한다(재시도로 두 번 와도 단계가 두 번 오르지 않음).
-   * 읽은 뒤 다른 요청이 먼저 바꿨으면(count 0) 그 결과를 돌려준다.
-   */
   private async recordWord(
     userId: string,
     id: bigint,
@@ -341,10 +334,6 @@ export class ReviewService {
     return state(next.level, next.nextReviewAt);
   }
 
-  /**
-   * 틀리면 '다시 하기'에 넣고(dictation_wrong_at = 지금), 다시 하기 모드에서 맞히면 뺀다.
-   * 받아쓰기 모드에서 맞혀도 다시 하기 목록은 그대로 둔다.
-   */
   private async recordDictation(
     userId: string,
     id: bigint,

@@ -39,7 +39,9 @@ docker run -d --name pass-kuai-swagger -p 8081:8080 \
 - `src/usage`: 하루 분석 횟수·발음 연습 시간 한도, 서버 전체 하루 비용 상한
 - `src/constants`: 상수와 에러 코드(`error-code.ts`), `src/utils`: 작은 함수들
 
-**아직 없는 것:** `GET /me/usage`(명세에만 있음), 하루 사용량의 DB 저장(지금은 서버 메모리라 재시작하면 초기화), 분석 결과·토큰 보관 기간 정리 작업. 자세한 규칙은 [docs/database.md](docs/database.md) 5장에 있어요.
+**아직 없는 것:** `GET /me/usage`(명세에만 있음), 하루 사용량의 DB 저장(지금은 서버 메모리라 재시작하면 초기화). 1차 배포에서는 보류했어요.
+
+**정리 작업:** 매일 한국 시간 새벽 4시에 7일이 지난 분석 결과와 쓸 수 없게 된 refresh token을 지워요. 삭제 예정 계정은 1시간마다 정리해요. 규칙은 [docs/database.md](docs/database.md) 5장에 있어요.
 
 ## 로컬에서 실행
 

@@ -43,7 +43,6 @@ async function analyze(u: User, sentence: string, words: string[]) {
   return res.body.analysisId as string;
 }
 
-/** 단어들을 저장하고 id를 저장 순서대로 돌려준다 */
 async function saveWords(u: User, words: string[]): Promise<number[]> {
   const analysisId = await analyze(u, words.join(''), words);
   const ids: number[] = [];
@@ -124,7 +123,6 @@ describe('GET /me/review/summary', () => {
       word: { due: 1, total: 2 },
       sentence: { due: 1, total: 1 },
       dictation: { due: 0, total: 1 },
-      // 틀린 문장이지만 오늘 받아쓰기를 했으니 다시 하기는 내일부터
       retry: { due: 0, total: 1 },
     });
   });
@@ -198,7 +196,6 @@ describe('단어 카드 (mode=word)', () => {
     const [a] = await saveWords(u, ['你']);
     const body = { mode: 'word', itemType: 'word', itemId: a, result: 'known' };
 
-    // 처음 보는 카드로 동시에 여러 번 (앱 재시도·두 번 누르기)
     const racing = await Promise.all(
       Array.from({ length: 5 }, () => log(u, body)),
     );
@@ -256,7 +253,6 @@ describe('단어 카드 (mode=word)', () => {
       })),
     });
 
-    // 98장 봤으니 남은 7장 중 2장만
     expect((await due(u, 'mode=word').expect(200)).body.items).toHaveLength(2);
     expect((await summary(u).expect(200)).body.word).toEqual({
       due: 2,
@@ -356,7 +352,6 @@ describe('받아쓰기·다시 하기 (mode=dictation, retry)', () => {
       lastAt: expect.any(String),
       inRetry: true,
     });
-    // 오늘 이미 풀었으니 다시 하기는 내일
     expect((await due(u, 'mode=retry').expect(200)).body.items).toEqual([]);
 
     await prisma.vocabSentence.update({

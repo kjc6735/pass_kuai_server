@@ -1,6 +1,5 @@
 import { nextCardState, reviewedToday } from './srs';
 
-// 2026-11-24 15:00 KST
 const now = new Date('2026-11-24T06:00:00Z');
 const kst0 = (date: string) => new Date(`${date}T00:00:00+09:00`);
 
@@ -33,7 +32,6 @@ describe('nextCardState', () => {
   });
 
   it('날짜는 UTC가 아니라 한국 시간 기준 (KST 0시 직후)', () => {
-    // 2026-11-25 00:30 KST = 2026-11-24 15:30 UTC
     const justAfter = new Date('2026-11-24T15:30:00Z');
     expect(nextCardState(0, true, justAfter).nextReviewAt).toEqual(
       kst0('2026-11-26'),

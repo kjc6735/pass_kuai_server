@@ -19,3 +19,5 @@ export const ANALYZE_RESULT_LIMITS = {
   wordsPerSentence: MAX_SENTENCE_LENGTH,
   syllablesPerWord: 50,
 } as const;
+
+export const ANALYSIS_RESULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
