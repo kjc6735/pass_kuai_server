@@ -31,8 +31,8 @@ info:
 servers:
   - url: http://localhost:3000
     description: 개발
-  - url: https://api.passkuai.com
-    description: 운영 (예정)
+  - url: https://passkuai.com/api
+    description: 운영
 security:
   - bearerAuth: []
 tags:
