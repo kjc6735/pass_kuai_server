@@ -9,12 +9,14 @@ import {
   OPENAI_DEFAULT_MAX_RETRIES,
   OPENAI_DEFAULT_TIMEOUT_MS,
 } from '../constants/llm';
+import { DEFAULT_LOG_LEVEL, LOG_LEVELS, LogLevel } from '../constants/logging';
 
 export interface EnvConfig {
   NODE_ENV: 'development' | 'production' | 'test';
   PORT: number;
   TRUST_PROXY: number;
   DATABASE_URL?: string;
+  LOG_LEVEL: LogLevel;
 
   JWT_SECRET: string;
   KAKAO_APP_ID?: number;
@@ -64,6 +66,10 @@ const rules: Record<EnvKey, Joi.Schema> = {
   [Env.DATABASE_URL]: requiredInProduction(
     str().uri({ scheme: ['postgres', 'postgresql'] }),
   ),
+  [Env.LOG_LEVEL]: Joi.string()
+    .valid(...LOG_LEVELS)
+    .empty(BLANK)
+    .default(DEFAULT_LOG_LEVEL),
 
   [Env.JWT_SECRET]: str().when(Env.NODE_ENV, {
     is: NodeEnv.PRODUCTION,

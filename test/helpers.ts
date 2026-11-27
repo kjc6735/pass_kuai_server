@@ -25,6 +25,7 @@ export interface TestApp {
 }
 
 const BASE_ENV = {
+  LOG_LEVEL: 'silent',
   JWT_SECRET: 'test-secret',
   ANTHROPIC_API_KEY: 'test-key-not-real',
   OPENAI_API_KEY: 'test-key-not-real',

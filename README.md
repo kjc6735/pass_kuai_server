@@ -65,6 +65,16 @@ npm run start:dev        # http://localhost:3000
 
 각 변수 설명은 [.env.example](.env.example)에 있어요. 서버가 뜰 때 Joi로 검사해요(`src/config/env.schema.ts`).
 
+### 로그
+
+[nestjs-pino](https://github.com/iamolegga/nestjs-pino)로 찍어요. 서비스 코드는 지금처럼 `new Logger(이름)`(`@nestjs/common`)을 쓰면 pino로 나가요.
+
+- 개발(`NODE_ENV=development`)에서는 한 줄씩 읽기 좋게, 운영에서는 JSON 한 줄로 찍어요. 운영 로그는 `docker compose logs server`로 봐요.
+- 요청이 끝날 때마다 `request completed` 한 줄을 남겨요. 요청 번호(`req.id`), 메서드, 주소, 상태 코드, 걸린 시간, 로그인했으면 `userId`가 들어가요. 헤더(토큰)와 본문은 남기지 않아요.
+- 4xx는 `warn`, 5xx는 `error` 수준이에요. `/health`, `/metrics` 요청은 남기지 않아요.
+- 요청 번호는 `X-Request-Id` 응답 헤더로도 내려가요. 앱에서 오류를 신고할 때 이 값을 받으면 로그를 바로 찾을 수 있어요. 요청에 `X-Request-Id`(영문·숫자·`._-` 64자까지)를 담아 보내면 그 값을 써요.
+- 수준은 `LOG_LEVEL`로 바꿔요(기본 `info`). 테스트에서는 `silent`예요.
+
 ### DB
 
 ```bash

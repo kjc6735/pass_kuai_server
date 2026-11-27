@@ -20,7 +20,13 @@ describe('validateEnv', () => {
       ANTHROPIC_TIMEOUT_MS: 60_000,
       RATE_LIMIT_PER_MINUTE: 30,
       DAILY_BUDGET_USD: 2,
+      LOG_LEVEL: 'info',
     });
+  });
+
+  it('로그 수준은 pino 수준 이름만 받는다', () => {
+    expect(validateEnv({ LOG_LEVEL: 'debug' }).LOG_LEVEL).toBe('debug');
+    expect(() => validateEnv({ LOG_LEVEL: 'verbose' })).toThrow('LOG_LEVEL');
   });
 
   it('빈 값이나 공백은 없는 것으로 본다 (빈 값이 0이 되면 모든 요청이 바로 실패한다)', () => {

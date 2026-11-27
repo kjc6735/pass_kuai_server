@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { LoggerModule } from 'nestjs-pino';
 import { AgreementGuard } from './agreement/agreement.guard';
 import { AgreementModule } from './agreement/agreement.module';
 import { AnalyzeModule } from './analyze/analyze.module';
@@ -18,6 +19,7 @@ import { SttModule } from './stt/stt.module';
 import { ReviewModule } from './review/review.module';
 import { UsageModule } from './usage/usage.module';
 import { VocabModule } from './vocab/vocab.module';
+import { loggerParams } from './config/logger.config';
 import { validateEnv, type EnvConfig } from './config/env.schema';
 import { Env, NodeEnv } from './constants/env';
 
@@ -38,6 +40,10 @@ export class AppModule {
           isGlobal: true,
           ignoreEnvFile: process.env[Env.NODE_ENV] === NodeEnv.TEST,
           validate: validateEnv,
+        }),
+        LoggerModule.forRootAsync({
+          inject: [ConfigService],
+          useFactory: loggerParams,
         }),
         ScheduleModule.forRoot(),
         ThrottlerModule.forRootAsync({
