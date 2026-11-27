@@ -1,40 +1,35 @@
-import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import { join } from 'node:path';
 import * as request from 'supertest';
-import { parse } from 'yaml';
-import { readFileSync } from 'node:fs';
-import { setupApiDocs } from '../src/docs/api-docs';
+import { closeTestApp, createTestApp, TestApp } from './helpers';
+
+interface ApiDocument {
+  info: { title: string };
+  paths: Record<string, Record<string, { tags?: string[] }>>;
+  components: { securitySchemes: Record<string, { scheme: string }> };
+}
 
 describe('API 문서 화면 (e2e)', () => {
-  let app: INestApplication;
+  let t: TestApp;
 
-  afterEach(() => app?.close());
+  afterEach(() => closeTestApp(t));
 
-  async function appWithDocs(specPath?: string) {
-    const moduleRef = await Test.createTestingModule({}).compile();
-    app = moduleRef.createNestApplication({ logger: false });
-    const mounted = setupApiDocs(app, specPath);
-    await app.init();
-    return mounted;
-  }
+  it('실제 라우트로 만든 문서를 /docs에 띄운다', async () => {
+    t = await createTestApp({}, { docs: true });
+    const server = t.app.getHttpServer();
 
-  it('docs/openapi.yaml을 /docs에 띄운다', async () => {
-    expect(await appWithDocs()).toBe(true);
-    const spec = parse(
-      readFileSync(join(process.cwd(), 'docs/openapi.yaml'), 'utf8'),
-    ) as { info: { title: string } };
-
-    const html = await request(app.getHttpServer()).get('/docs').expect(200);
+    const html = await request(server).get('/docs').expect(200);
     expect(html.text).toContain('swagger-ui');
-    const json = await request(app.getHttpServer())
-      .get('/docs-json')
-      .expect(200);
-    expect(json.body.info.title).toBe(spec.info.title);
+
+    const { body } = await request(server).get('/docs-json').expect(200);
+    const doc = body as ApiDocument;
+    expect(Object.keys(doc.paths['/vocab/words'])).toEqual(
+      expect.arrayContaining(['get', 'post']),
+    );
+    expect(doc.paths['/auth/social/{provider}'].post.tags).toEqual(['Auth']);
+    expect(doc.components.securitySchemes.bearer.scheme).toBe('bearer');
   });
 
-  it('명세 파일이 없으면 띄우지 않는다', async () => {
-    expect(await appWithDocs('/nope/openapi.yaml')).toBe(false);
-    await request(app.getHttpServer()).get('/docs').expect(404);
+  it('부르지 않으면 띄우지 않는다', async () => {
+    t = await createTestApp();
+    await request(t.app.getHttpServer()).get('/docs').expect(404);
   });
 });

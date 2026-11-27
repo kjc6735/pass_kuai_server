@@ -1,21 +1,24 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { INestApplication, Logger } from '@nestjs/common';
-import { OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
-import { parse } from 'yaml';
-import { API_DOCS_PATH, OPENAPI_SPEC_FILE } from '../constants/docs';
+import { INestApplication } from '@nestjs/common';
+import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
+import {
+  API_DOCS_AUTH,
+  API_DOCS_PATH,
+  API_DOCS_TITLE,
+  API_DOCS_VERSION,
+} from '../constants/docs';
 
-export function setupApiDocs(
-  app: INestApplication,
-  specPath = join(process.cwd(), OPENAPI_SPEC_FILE),
-): boolean {
-  if (!existsSync(specPath)) {
-    new Logger('ApiDocs').warn(
-      `${specPath}가 없어 API 문서 화면을 띄우지 않아요.`,
-    );
-    return false;
-  }
-  const document = parse(readFileSync(specPath, 'utf8')) as OpenAPIObject;
-  SwaggerModule.setup(API_DOCS_PATH, app, document);
-  return true;
+export function buildApiDocument(app: INestApplication): OpenAPIObject {
+  const config = new DocumentBuilder()
+    .setTitle(API_DOCS_TITLE)
+    .setVersion(API_DOCS_VERSION)
+    .addBearerAuth(undefined, API_DOCS_AUTH)
+    .addSecurityRequirements(API_DOCS_AUTH)
+    .build();
+  return SwaggerModule.createDocument(app, config);
+}
+
+export function setupApiDocs(app: INestApplication) {
+  SwaggerModule.setup(API_DOCS_PATH, app, () => buildApiDocument(app), {
+    swaggerOptions: { persistAuthorization: true },
+  });
 }
