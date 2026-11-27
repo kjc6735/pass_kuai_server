@@ -14,14 +14,11 @@
 | [docs/database.md](docs/database.md) | DB 설계와 보관·삭제 규칙 |
 | [lab/README.md](lab/README.md) | 부하 테스트 환경 (k6, 가짜 AI 서버, Grafana) |
 
-명세를 Swagger 화면으로 보려면:
+명세는 `npm run start:dev`로 서버를 켜면 Swagger 화면으로 볼 수 있어요: http://localhost:3000/docs
 
-```bash
-docker run -d --name pass-kuai-swagger -p 8081:8080 \
-  -e SWAGGER_JSON=/spec/openapi.yaml -v "$PWD/docs:/spec:ro" \
-  swaggerapi/swagger-ui:v5.17.14
-# http://localhost:8081 (docs/를 그대로 읽어서 고치면 새로고침만 하면 돼요)
-```
+- `docs/openapi.yaml`을 서버가 뜰 때 읽어요. yaml을 고치면 서버를 다시 켜야 반영돼요.
+- 서버와 주소가 같아서 "Try it out"으로 바로 호출해 볼 수 있어요. 로그인이 필요한 API는 오른쪽 위 **Authorize**에 액세스 토큰을 넣어요.
+- 운영(`NODE_ENV=production`)에서는 띄우지 않아요.
 
 ## 기능
 
