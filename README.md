@@ -14,14 +14,13 @@
 | [docs/database.md](docs/database.md) | DB 설계와 보관·삭제 규칙 |
 | [lab/README.md](lab/README.md) | 부하 테스트 환경 (k6, 가짜 AI 서버, Grafana) |
 
-명세를 Swagger 화면으로 보려면:
+`npm run start:dev`로 서버를 켜면 Swagger 화면으로 API를 볼 수 있어요: http://localhost:3000/docs (JSON은 `/docs-json`)
 
-```bash
-docker run -d --name pass-kuai-swagger -p 8081:8080 \
-  -e SWAGGER_JSON=/spec/openapi.yaml -v "$PWD/docs:/spec:ro" \
-  swaggerapi/swagger-ui:v5.17.14
-# http://localhost:8081 (docs/를 그대로 읽어서 고치면 새로고침만 하면 돼요)
-```
+- 서버가 뜰 때 실제 컨트롤러와 요청 DTO를 읽어서 만들어요. 그래서 화면에 있는 API는 모두 실제로 있는 API예요.
+- 요청 DTO의 필드와 검증 규칙(`@IsString`, `@MaxLength` 등)은 Nest CLI 플러그인(`nest-cli.json`)이 빌드할 때 자동으로 문서에 넣어요. 응답 모양은 아직 들어가지 않아요.
+- "Try it out"으로 바로 호출해 볼 수 있어요. 로그인이 필요한 API는 오른쪽 위 **Authorize**에 액세스 토큰을 넣어요.
+- 운영(`NODE_ENV=production`)에서는 띄우지 않아요.
+- `docs/openapi.yaml`은 앱과 처음 맞춘 설계 문서로 그대로 둬요. 서버 화면과는 따로예요.
 
 ## 기능
 

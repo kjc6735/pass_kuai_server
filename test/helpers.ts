@@ -6,6 +6,7 @@ import { AgreementService } from '../src/agreement/agreement.service';
 import { AnalysisResultService } from '../src/analyze/analysis-result.service';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
+import { setupApiDocs } from '../src/docs/api-docs';
 import { AppleVerifier } from '../src/auth/social/apple.verifier';
 import { GoogleVerifier } from '../src/auth/social/google.verifier';
 import { KakaoVerifier } from '../src/auth/social/kakao.verifier';
@@ -37,7 +38,10 @@ const BASE_ENV = {
 
 export async function createTestApp(
   env: Record<string, string> = {},
-  { enforceAgreements = false }: { enforceAgreements?: boolean } = {},
+  {
+    enforceAgreements = false,
+    docs = false,
+  }: { enforceAgreements?: boolean; docs?: boolean } = {},
 ): Promise<TestApp> {
   Object.assign(process.env, BASE_ENV, env);
   const create = jest.fn();
@@ -82,6 +86,7 @@ export async function createTestApp(
 
   const app = moduleRef.createNestApplication({ logger: false });
   configureApp(app);
+  if (docs) setupApiDocs(app);
   await app.listen(0, '127.0.0.1');
   if (!enforceAgreements) {
     jest.spyOn(app.get(AgreementService), 'hasAll').mockResolvedValue(true);
