@@ -95,6 +95,7 @@ npm run lint
 | 주소 | 내용 |
 | --- | --- |
 | `https://passkuai.com/api/...` | API. Nginx가 `/api`를 떼고 서버로 넘겨요(`/api/health` → 서버의 `/health`) |
+| `https://passkuai.com/terms` | 이용약관 (`deploy/site/terms.html`) |
 | `https://passkuai.com/privacy` | 개인정보처리방침 (`deploy/site/privacy.html`) |
 | `https://passkuai.com/` | 소개 페이지 (`deploy/site/index.html`) |
 
